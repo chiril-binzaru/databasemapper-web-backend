@@ -1,0 +1,10 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: databasemapper-db-postgres
+    environment:
+      POSTGRES_DB: databasemapper-db
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: qwerty
+    ports:
+      - "5432:5432"
