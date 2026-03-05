@@ -1,3 +1,11 @@
 spring:
   application:
     name: databasemapper-web-backend
+  datasource:
+    url: jdbc:postgresql://localhost:5432/databasemapper-db
+    username: dev
+    password: qwerty
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: true
