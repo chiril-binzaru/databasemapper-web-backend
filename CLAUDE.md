@@ -26,11 +26,11 @@ via API so the Java library can hydrate model objects automatically in tests.
 | Layer        | Technology                        |
 |--------------|-----------------------------------|
 | Language     | Java 21 (Temurin LTS)             |
-| Framework    | Spring Boot 3.5.x                 |
-| Build tool   | Maven                             |
+| Framework    | Spring Boot 3.5.11                |
+| Build tool   | Maven Wrapper (./mvnw)            |
 | Database     | PostgreSQL (app data storage)     |
+| Migrations   | Flyway                            |
 | ORM          | Spring Data JPA + Hibernate       |
-| API docs     | SpringDoc OpenAPI (Swagger UI)    |
 | Boilerplate  | Lombok                            |
 | Dev tools    | Spring Boot DevTools              |
 
@@ -49,20 +49,66 @@ databasemapper-web-backend/
 │   │   │   ├── dto/           # Request/Response DTOs
 │   │   │   └── config/        # Configuration classes
 │   │   └── resources/
-│   │       ├── application.yml
-│   │       └── application-local.yml  # Local dev overrides (gitignored)
+│   │       ├── application.yaml
+│   │       ├── application-local.yaml  # Local dev overrides (gitignored)
+│   │       └── db/migration/           # Flyway migration scripts
 │   └── test/
 │       └── java/com/databasemapper/
+├── docker-compose.yml
 ├── pom.xml
 └── CLAUDE.md
 ```
 
+## Database Schema
+
+Five tables, applied via Flyway migrations V1–V5.
+
+```
+databases    (database_id, database_type, database_host, database_name)
+services     (service_id, database_id, service_name, service_base_url, swagger_endpoint)
+connections  (connection_id, database_id, port, username, password, connection_string, connection_mode, is_active)
+endpoints    (endpoint_id, service_id, http_method, endpoint_path)
+mappings     (mapping_id, endpoint_id, response_model_name, mapping_data JSONB)
+```
+
+### Key relationships and design decisions
+
+- `databases` is independent — it exists on its own, not owned by a service
+- `services.database_id` → `databases` — many services can share one database (real-world scenario)
+- `connections.database_id` → `databases` — multiple connections per database (e.g. different users/ports)
+- `connections.is_active` — marks which connection is currently used for a given database
+- `connections.connection_mode` — enum: `PARAMETERS` or `CONNECTION_STRING`; determines which fields are filled
+- `connections.username` and `connections.password` — nullable (not needed in CONNECTION_STRING mode)
+- `services.swagger_endpoint` — nullable; stores the path (e.g. `/v3/api-docs`); combined with `service_base_url` to fetch the OpenAPI spec
+- `mappings.mapping_data` — JSONB; stores flexible mapping metadata (field↔column, primary keys, filter conditions, etc.)
+- `mappings.response_model_name` — human-readable label shown in UI (e.g. `UserResponse`)
+
+### Flyway conventions
+- One table per migration file
+- Files located in `src/main/resources/db/migration/`
+- Naming: `V{n}__{description}.sql` (double underscore)
+- `spring.jpa.hibernate.ddl-auto=validate` — Hibernate validates schema only, Flyway owns all DDL
+
+### Local PostgreSQL via Docker
+```bash
+docker compose up -d    # start PostgreSQL container
+docker compose down     # stop (data preserved)
+docker compose down -v  # stop and delete all data
+```
+
+Container name: `databasemapper-db-postgres`
+Database name: `databasemapper-db`
+User: `dev`
+Port: `5432`
+
 ## Key API Responsibilities
 
-- **Database connection management** — store and validate connections to target DBs
-- **Schema import** — connect to target DB and read its table/column structure
-- **Swagger/OpenAPI import** — parse specs to discover model fields
-- **Mapping management** — CRUD for DB column ↔ model field mappings
+- **Database management** — CRUD for database records (`/api/v1/databases`)
+- **Service management** — CRUD for services (`/api/v1/services`)
+- **Connection management** — CRUD for database connections (`/api/v1/connections`)
+- **Endpoint management** — CRUD for service endpoints (`/api/v1/endpoints`)
+- **Mapping management** — CRUD for mappings (`/api/v1/mappings`)
+- **Swagger/OpenAPI import** — fetch and parse OpenAPI spec from a service's swagger_endpoint
 - **Mapping export** — return mappings as compact metadata files
 - **Model hydration API** — return data from target DB as model objects (JSON)
 
@@ -73,21 +119,22 @@ Follow layered architecture: `controller → service → repository`.
 Controllers must not contain business logic. Services must not directly use `EntityManager`.
 
 ### Naming
-- Controllers: `*Controller.java` (e.g., `MappingController`)
-- Services: `*Service.java` + `*ServiceImpl.java`
-- Repositories: `*Repository.java` (extend `JpaRepository`)
-- Entities: singular noun (e.g., `Mapping`, `DatabaseConnection`)
-- DTOs: `*Request.java` / `*Response.java`
+- Controllers: `*Controller.java` (e.g., `DatabaseController`)
+- Services: `*Service.java` + `*ServiceImpl.java` (e.g., `DatabaseService`, `DatabaseServiceImpl`)
+- Repositories: `*Repository.java` extending `JpaRepository` (e.g., `DatabaseRepository`)
+- Entities: singular noun matching table concept (e.g., `Database`, `Service`, `Connection`)
+- DTOs: `*Request.java` / `*Response.java` (e.g., `DatabaseRequest`, `DatabaseResponse`)
 
 ### REST Conventions
 - Use standard HTTP verbs: GET, POST, PUT, DELETE
-- Resource URLs in plural kebab-case: `/api/v1/mappings`, `/api/v1/database-connections`
+- Resource URLs in plural kebab-case: `/api/v1/databases`, `/api/v1/connections`
+- Plural form is used even when creating a single resource — this is standard REST convention
 - Return `ResponseEntity<T>` from controllers
 - Validation via `@Valid` + Bean Validation annotations on DTOs
 
 ### Configuration
-- Use `application.yml` (not `.properties`)
-- Never commit credentials — use `application-local.yml` (gitignored) or env variables
+- Use `application.yaml` (not `.properties`)
+- Never commit credentials — use `application-local.yaml` (gitignored) or env variables
 - Profile `local` for development, `prod` for production
 
 ### Error Handling
@@ -96,7 +143,7 @@ Controllers must not contain business logic. Services must not directly use `Ent
 
 ### Lombok
 Use Lombok to reduce boilerplate:
-- `@Data` or `@Getter`/`@Setter` on DTOs
+- `@Getter` / `@Setter` on DTOs
 - `@Builder` where appropriate
 - `@RequiredArgsConstructor` for constructor injection in services/controllers
 - **Do not** use `@Data` on JPA entities (can cause issues with `equals`/`hashCode`)
@@ -111,7 +158,10 @@ for target DB connections.
 ## Running Locally
 
 ```bash
-# Start the app (requires PostgreSQL running locally or in Docker)
+# Start PostgreSQL first
+docker compose up -d
+
+# Start the app
 ./mvnw spring-boot:run
 
 # Run tests
