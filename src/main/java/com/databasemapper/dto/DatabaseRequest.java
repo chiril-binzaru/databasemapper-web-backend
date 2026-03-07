@@ -1,5 +1,7 @@
 package com.databasemapper.dto;
 
+import com.databasemapper.model.enums.DatabaseType;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.Getter;
@@ -9,9 +11,8 @@ import lombok.Setter;
 @Setter
 public class DatabaseRequest {
 
-    @NotBlank
-    @Size(max = 50)
-    private String databaseType;
+    @NotNull
+    private DatabaseType databaseType;
 
     @NotBlank
     @Size(max = 255)
