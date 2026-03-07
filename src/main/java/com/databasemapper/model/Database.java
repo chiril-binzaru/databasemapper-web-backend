@@ -1,5 +1,6 @@
 package com.databasemapper.model;
 
+import com.databasemapper.model.enums.DatabaseType;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
@@ -15,8 +16,9 @@ public class Database {
     @Column(name = "database_id")
     private Long databaseId;
 
+    @Enumerated(EnumType.STRING)
     @Column(name = "database_type", nullable = false, length = 50)
-    private String databaseType;
+    private DatabaseType databaseType;
 
     @Column(name = "database_host", nullable = false)
     private String databaseHost;

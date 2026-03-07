@@ -1,5 +1,6 @@
 package com.databasemapper.dto;
 
+import com.databasemapper.model.enums.DatabaseType;
 import lombok.Builder;
 import lombok.Getter;
 
@@ -8,7 +9,7 @@ import lombok.Getter;
 public class DatabaseResponse {
 
     private Long databaseId;
-    private String databaseType;
+    private DatabaseType databaseType;
     private String databaseHost;
     private String databaseName;
 }

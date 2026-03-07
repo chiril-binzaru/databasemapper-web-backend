@@ -1,0 +1,1 @@
+ALTER TABLE services ALTER COLUMN database_id DROP NOT NULL;
