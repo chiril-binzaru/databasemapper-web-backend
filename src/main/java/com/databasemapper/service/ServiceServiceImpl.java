@@ -9,6 +9,8 @@ import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
+
 @Service
 @RequiredArgsConstructor
 public class ServiceServiceImpl implements ServiceService {
@@ -32,12 +34,23 @@ public class ServiceServiceImpl implements ServiceService {
 
         com.databasemapper.model.Service saved = serviceRepository.save(service);
 
+        return toResponse(saved);
+    }
+
+    @Override
+    public List<ServiceResponse> getAll() {
+        return serviceRepository.findAllByOrderByServiceNameAsc().stream()
+                .map(this::toResponse)
+                .toList();
+    }
+
+    private ServiceResponse toResponse(com.databasemapper.model.Service service) {
         return ServiceResponse.builder()
-                .serviceId(saved.getServiceId())
-                .databaseId(saved.getDatabase() != null ? saved.getDatabase().getDatabaseId() : null)
-                .serviceName(saved.getServiceName())
-                .serviceBaseUrl(saved.getServiceBaseUrl())
-                .swaggerEndpoint(saved.getSwaggerEndpoint())
+                .serviceId(service.getServiceId())
+                .databaseId(service.getDatabase() != null ? service.getDatabase().getDatabaseId() : null)
+                .serviceName(service.getServiceName())
+                .serviceBaseUrl(service.getServiceBaseUrl())
+                .swaggerEndpoint(service.getSwaggerEndpoint())
                 .build();
     }
 }
