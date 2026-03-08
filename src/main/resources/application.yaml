@@ -9,3 +9,4 @@ spring:
     hibernate:
       ddl-auto: validate
     show-sql: true
+    open-in-view: false
