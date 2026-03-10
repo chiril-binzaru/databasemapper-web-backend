@@ -19,7 +19,7 @@ public class ServiceServiceImpl implements ServiceService {
     private final DatabaseRepository databaseRepository;
 
     @Override
-    public ServiceResponse create(ServiceRequest request) {
+    public List<ServiceResponse> create(ServiceRequest request) {
         com.databasemapper.model.Service service = new com.databasemapper.model.Service();
         service.setServiceName(request.getServiceName());
         service.setServiceBaseUrl(request.getServiceBaseUrl());
@@ -32,9 +32,9 @@ public class ServiceServiceImpl implements ServiceService {
             service.setDatabase(database);
         }
 
-        com.databasemapper.model.Service saved = serviceRepository.save(service);
+        serviceRepository.save(service);
 
-        return toResponse(saved);
+        return getAll();
     }
 
     @Override
