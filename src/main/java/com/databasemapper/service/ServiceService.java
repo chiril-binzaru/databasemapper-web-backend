@@ -7,7 +7,7 @@ import java.util.List;
 
 public interface ServiceService {
 
-    ServiceResponse create(ServiceRequest request);
+    List<ServiceResponse> create(ServiceRequest request);
 
     List<ServiceResponse> getAll();
 }

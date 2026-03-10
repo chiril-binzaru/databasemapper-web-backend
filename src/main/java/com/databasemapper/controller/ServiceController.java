@@ -24,8 +24,7 @@ public class ServiceController {
     }
 
     @PostMapping
-    public ResponseEntity<ServiceResponse> create(@Valid @RequestBody ServiceRequest request) {
-        ServiceResponse response = serviceService.create(request);
-        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    public ResponseEntity<List<ServiceResponse>> create(@Valid @RequestBody ServiceRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(serviceService.create(request));
     }
 }

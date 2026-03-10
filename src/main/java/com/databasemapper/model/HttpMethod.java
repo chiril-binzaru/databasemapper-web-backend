@@ -1,0 +1,5 @@
+package com.databasemapper.model;
+
+public enum HttpMethod {
+    GET, POST, PUT, DELETE, PATCH
+}
