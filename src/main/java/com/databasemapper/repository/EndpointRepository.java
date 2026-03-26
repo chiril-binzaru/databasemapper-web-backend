@@ -8,4 +8,6 @@ import java.util.List;
 public interface EndpointRepository extends JpaRepository<Endpoint, Long> {
 
     List<Endpoint> findAllByService_ServiceIdOrderByEndpointPathAscHttpMethodAsc(Long serviceId);
+
+    void deleteByService_ServiceId(Long serviceId);
 }

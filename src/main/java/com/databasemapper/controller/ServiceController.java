@@ -27,4 +27,10 @@ public class ServiceController {
     public ResponseEntity<List<ServiceResponse>> create(@Valid @RequestBody ServiceRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(serviceService.create(request));
     }
+
+    @DeleteMapping("/{serviceId}")
+    public ResponseEntity<Void> delete(@PathVariable Long serviceId) {
+        serviceService.delete(serviceId);
+        return ResponseEntity.noContent().build();
+    }
 }
