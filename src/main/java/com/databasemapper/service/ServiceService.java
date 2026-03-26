@@ -10,4 +10,6 @@ public interface ServiceService {
     List<ServiceResponse> create(ServiceRequest request);
 
     List<ServiceResponse> getAll();
+
+    void delete(Long serviceId);
 }
