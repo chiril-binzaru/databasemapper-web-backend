@@ -1,8 +1,11 @@
 package com.databasemapper.model;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "services")
@@ -27,4 +30,12 @@ public class Service {
 
     @Column(name = "swagger_endpoint")
     private String swaggerEndpoint;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "last_fetched_swagger", columnDefinition = "jsonb")
+    private JsonNode lastFetchedSwagger;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "committed_swagger", columnDefinition = "jsonb")
+    private JsonNode committedSwagger;
 }
