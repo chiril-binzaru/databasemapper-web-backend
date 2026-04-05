@@ -1,10 +1,13 @@
 package com.databasemapper.controller;
 
+import com.databasemapper.dto.SwaggerEndpointResponse;
 import com.databasemapper.service.SwaggerService;
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1/services/{serviceId}/swagger")
@@ -21,5 +24,10 @@ public class SwaggerController {
     @PostMapping("/commit")
     public ResponseEntity<JsonNode> commitSwagger(@PathVariable Long serviceId) {
         return ResponseEntity.ok(swaggerService.commit(serviceId));
+    }
+
+    @GetMapping("/endpoints")
+    public ResponseEntity<List<SwaggerEndpointResponse>> fetchEndpoints(@PathVariable Long serviceId) {
+        return ResponseEntity.ok(swaggerService.fetchSwaggerEndpoints(serviceId));
     }
 }
