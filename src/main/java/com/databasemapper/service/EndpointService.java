@@ -9,6 +9,8 @@ import java.util.List;
 
 public interface EndpointService {
 
+    ServiceEndpointsResponse getByServiceId(Long serviceId);
+
     ServiceEndpointsResponse create(Long serviceId, EndpointRequest request);
 
     EndpointSyncResponse syncEndpoints(Long serviceId);

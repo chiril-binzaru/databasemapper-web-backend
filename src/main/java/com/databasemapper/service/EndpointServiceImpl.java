@@ -27,10 +27,14 @@ public class EndpointServiceImpl implements EndpointService {
     private final SwaggerService swaggerService;
 
     @Override
+    public ServiceEndpointsResponse getByServiceId(Long serviceId) {
+        requireService(serviceId);
+        return toServiceEndpointsResponse(serviceId);
+    }
+
+    @Override
     public ServiceEndpointsResponse create(Long serviceId, EndpointRequest request) {
-        Service service = serviceRepository.findById(serviceId)
-                .orElseThrow(() -> new EntityNotFoundException(
-                        "Service not found with id: " + serviceId));
+        Service service = requireService(serviceId);
 
         Endpoint endpoint = new Endpoint();
         endpoint.setService(service);
@@ -45,8 +49,7 @@ public class EndpointServiceImpl implements EndpointService {
     @Override
     @Transactional
     public EndpointSyncResponse syncEndpoints(Long serviceId) {
-        Service service = serviceRepository.findById(serviceId)
-                .orElseThrow(() -> new EntityNotFoundException("Service not found with id: " + serviceId));
+        Service service = requireService(serviceId);
 
         List<SwaggerEndpointResponse> swaggerEndpoints = swaggerService.fetchSwaggerEndpoints(serviceId);
         List<Endpoint> dbEndpoints = endpointRepository
@@ -123,8 +126,7 @@ public class EndpointServiceImpl implements EndpointService {
     @Override
     @Transactional
     public ServiceEndpointsResponse replaceEndpoints(Long serviceId, List<EndpointReplaceRequest> endpoints) {
-        Service service = serviceRepository.findById(serviceId)
-                .orElseThrow(() -> new EntityNotFoundException("Service not found with id: " + serviceId));
+        Service service = requireService(serviceId);
 
         List<Long> endpointIds = endpointRepository
                 .findAllByService_ServiceIdOrderByEndpointPathAscHttpMethodAsc(serviceId)
@@ -169,6 +171,11 @@ public class EndpointServiceImpl implements EndpointService {
                 .httpMethod(endpoint.getHttpMethod())
                 .endpointPath(endpoint.getEndpointPath())
                 .build();
+    }
+
+    private Service requireService(Long serviceId) {
+        return serviceRepository.findById(serviceId)
+                .orElseThrow(() -> new EntityNotFoundException("Service not found with id: " + serviceId));
     }
 
     private Set<String> toKeys(List<SwaggerEndpointResponse> endpoints) {
