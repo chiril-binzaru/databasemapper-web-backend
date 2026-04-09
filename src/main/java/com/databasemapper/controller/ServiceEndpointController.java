@@ -21,6 +21,12 @@ public class ServiceEndpointController {
 
     private final EndpointService endpointService;
 
+    @Operation(summary = "Returns all endpoint entities for the specified service")
+    @GetMapping
+    public ResponseEntity<ServiceEndpointsResponse> getByServiceId(@PathVariable Long serviceId) {
+        return ResponseEntity.ok(endpointService.getByServiceId(serviceId));
+    }
+
     @Operation(summary = "Creates an endpoint entity for the specified service")
     @PostMapping
     public ResponseEntity<ServiceEndpointsResponse> create(
