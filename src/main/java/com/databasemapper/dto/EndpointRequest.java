@@ -12,9 +12,6 @@ import lombok.Setter;
 public class EndpointRequest {
 
     @NotNull
-    private Long serviceId;
-
-    @NotNull
     private HttpMethod httpMethod;
 
     @NotBlank

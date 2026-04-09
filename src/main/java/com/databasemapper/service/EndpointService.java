@@ -9,7 +9,7 @@ import java.util.List;
 
 public interface EndpointService {
 
-    ServiceEndpointsResponse create(EndpointRequest request);
+    ServiceEndpointsResponse create(Long serviceId, EndpointRequest request);
 
     EndpointSyncResponse syncEndpoints(Long serviceId);
 

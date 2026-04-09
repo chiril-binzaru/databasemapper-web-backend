@@ -27,10 +27,10 @@ public class EndpointServiceImpl implements EndpointService {
     private final SwaggerService swaggerService;
 
     @Override
-    public ServiceEndpointsResponse create(EndpointRequest request) {
-        Service service = serviceRepository.findById(request.getServiceId())
+    public ServiceEndpointsResponse create(Long serviceId, EndpointRequest request) {
+        Service service = serviceRepository.findById(serviceId)
                 .orElseThrow(() -> new EntityNotFoundException(
-                        "Service not found with id: " + request.getServiceId()));
+                        "Service not found with id: " + serviceId));
 
         Endpoint endpoint = new Endpoint();
         endpoint.setService(service);
@@ -39,7 +39,7 @@ public class EndpointServiceImpl implements EndpointService {
 
         endpointRepository.save(endpoint);
 
-        return toServiceEndpointsResponse(service.getServiceId());
+        return toServiceEndpointsResponse(serviceId);
     }
 
     @Override
