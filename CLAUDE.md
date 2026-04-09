@@ -108,7 +108,7 @@ Port: `5432`
 - **Database management** — CRUD for database records (`/api/v1/databases`)
 - **Service management** — CRUD for services (`/api/v1/services`)
 - **Connection management** — CRUD for database connections (`/api/v1/connections`)
-- **Endpoint management** — CRUD for service endpoints (`/api/v1/endpoints`)
+- **Endpoint management** — CRUD for service endpoints (`/api/v1/services/{serviceId}/endpoints`)
 - **Mapping management** — CRUD for mappings (`/api/v1/mappings`)
 - **Swagger/OpenAPI import** — fetch and parse OpenAPI spec from a service's swagger_endpoint
 - **Mapping export** — return mappings as compact metadata files
