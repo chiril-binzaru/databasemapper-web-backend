@@ -62,22 +62,11 @@ public class EndpointServiceImpl implements EndpointService {
 
         if (swaggerKeys.equals(dbKeys)) {
             return EndpointSyncResponse.builder()
-                    .status(SyncStatus.UNCHANGED)
+                    .syncStatus(SyncStatus.UNCHANGED)
                     .build();
         }
 
         if (dbEndpoints.isEmpty()) {
-            List<Endpoint> toSave = swaggerEndpoints.stream()
-                    .map(se -> {
-                        Endpoint e = new Endpoint();
-                        e.setService(service);
-                        e.setHttpMethod(se.getHttpMethod());
-                        e.setEndpointPath(se.getPath());
-                        return e;
-                    })
-                    .toList();
-            endpointRepository.saveAll(toSave);
-
             List<EndpointSyncItemResponse> items = swaggerEndpoints.stream()
                     .map(se -> EndpointSyncItemResponse.builder()
                             .httpMethod(se.getHttpMethod())
@@ -86,7 +75,7 @@ public class EndpointServiceImpl implements EndpointService {
                     .toList();
 
             return EndpointSyncResponse.builder()
-                    .status(SyncStatus.CREATED)
+                    .syncStatus(SyncStatus.TO_ADD_ALL)
                     .endpoints(items)
                     .build();
         }
@@ -118,7 +107,7 @@ public class EndpointServiceImpl implements EndpointService {
         }
 
         return EndpointSyncResponse.builder()
-                .status(SyncStatus.CONFLICT)
+                .syncStatus(SyncStatus.CONFLICT)
                 .endpoints(items)
                 .build();
     }
