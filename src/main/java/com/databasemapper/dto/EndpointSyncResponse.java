@@ -12,6 +12,6 @@ import java.util.List;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class EndpointSyncResponse {
 
-    private SyncStatus status;
+    private SyncStatus syncStatus;
     private List<EndpointSyncItemResponse> endpoints;
 }
