@@ -10,15 +10,17 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
-@RequestMapping("/api/v1/databases")
+@RequestMapping("/api/v1/services/{serviceId}/database")
 @RequiredArgsConstructor
-public class DatabaseController {
+public class ServiceDatabaseController {
 
     private final DatabaseService databaseService;
 
     @PostMapping
-    public ResponseEntity<DatabaseResponse> create(@Valid @RequestBody DatabaseRequest request) {
-        DatabaseResponse response = databaseService.create(request);
+    public ResponseEntity<DatabaseResponse> create(
+            @PathVariable Long serviceId,
+            @Valid @RequestBody DatabaseRequest request) {
+        DatabaseResponse response = databaseService.create(serviceId, request);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 }

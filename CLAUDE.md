@@ -105,7 +105,7 @@ Port: `5432`
 
 ## Key API Responsibilities
 
-- **Database management** — CRUD for database records (`/api/v1/databases`)
+- **Database management** — service-scoped database operations (`/api/v1/services/{serviceId}/database`)
 - **Service management** — CRUD for services (`/api/v1/services`)
 - **Connection management** — CRUD for database connections (`/api/v1/connections`)
 - **Endpoint management** — CRUD for service endpoints (`/api/v1/services/{serviceId}/endpoints`)
@@ -121,7 +121,7 @@ Follow layered architecture: `controller → service → repository`.
 Controllers must not contain business logic. Services must not directly use `EntityManager`.
 
 ### Naming
-- Controllers: `*Controller.java` (e.g., `DatabaseController`)
+- Controllers: `*Controller.java` (e.g., `ServiceDatabaseController`)
 - Services: `*Service.java` + `*ServiceImpl.java` (e.g., `DatabaseService`, `DatabaseServiceImpl`)
 - Repositories: `*Repository.java` extending `JpaRepository` (e.g., `DatabaseRepository`)
 - Entities: singular noun matching table concept (e.g., `Database`, `Service`, `Connection`)
@@ -129,7 +129,7 @@ Controllers must not contain business logic. Services must not directly use `Ent
 
 ### REST Conventions
 - Use standard HTTP verbs: GET, POST, PUT, DELETE
-- Resource URLs in plural kebab-case: `/api/v1/databases`, `/api/v1/connections`
+- Resource URLs in plural kebab-case for collections, singular for service-scoped singleton resources like `/api/v1/services/{serviceId}/database`
 - Plural form is used even when creating a single resource — this is standard REST convention
 - Return `ResponseEntity<T>` from controllers
 - Validation via `@Valid` + Bean Validation annotations on DTOs
