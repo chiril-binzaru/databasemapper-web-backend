@@ -16,6 +16,11 @@ public class ServiceDatabaseController {
 
     private final DatabaseService databaseService;
 
+    @GetMapping
+    public ResponseEntity<DatabaseResponse> getByServiceId(@PathVariable Long serviceId) {
+        return ResponseEntity.ok(databaseService.getByServiceId(serviceId));
+    }
+
     @PostMapping
     public ResponseEntity<DatabaseResponse> create(
             @PathVariable Long serviceId,
