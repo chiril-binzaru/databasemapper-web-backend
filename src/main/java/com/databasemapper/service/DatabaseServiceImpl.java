@@ -30,7 +30,7 @@ public class DatabaseServiceImpl implements DatabaseService {
         if (database == null) {
             throw new ResponseStatusException(
                     NOT_FOUND,
-                    "Service has no database assigned: " + serviceId);
+                    "Service " + serviceId + " has no database assigned");
         }
 
         return toResponse(database);
