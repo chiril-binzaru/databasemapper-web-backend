@@ -5,5 +5,7 @@ import com.databasemapper.dto.DatabaseResponse;
 
 public interface DatabaseService {
 
+    DatabaseResponse getByServiceId(Long serviceId);
+
     DatabaseResponse create(Long serviceId, DatabaseRequest request);
 }

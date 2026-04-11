@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import static org.springframework.http.HttpStatus.CONFLICT;
+import static org.springframework.http.HttpStatus.NOT_FOUND;
 
 @org.springframework.stereotype.Service
 @RequiredArgsConstructor
@@ -18,6 +19,22 @@ public class DatabaseServiceImpl implements DatabaseService {
 
     private final DatabaseRepository databaseRepository;
     private final ServiceRepository serviceRepository;
+
+    @Override
+    @Transactional(readOnly = true)
+    public DatabaseResponse getByServiceId(Long serviceId) {
+        com.databasemapper.model.Service service = serviceRepository.findById(serviceId)
+                .orElseThrow(() -> new EntityNotFoundException("Service not found with id: " + serviceId));
+
+        Database database = service.getDatabase();
+        if (database == null) {
+            throw new ResponseStatusException(
+                    NOT_FOUND,
+                    "Service has no database assigned: " + serviceId);
+        }
+
+        return toResponse(database);
+    }
 
     @Override
     @Transactional
@@ -40,11 +57,15 @@ public class DatabaseServiceImpl implements DatabaseService {
         service.setDatabase(saved);
         serviceRepository.save(service);
 
+        return toResponse(saved);
+    }
+
+    private DatabaseResponse toResponse(Database database) {
         return DatabaseResponse.builder()
-                .databaseId(saved.getDatabaseId())
-                .databaseType(saved.getDatabaseType())
-                .databaseHost(saved.getDatabaseHost())
-                .databaseName(saved.getDatabaseName())
+                .databaseId(database.getDatabaseId())
+                .databaseType(database.getDatabaseType())
+                .databaseHost(database.getDatabaseHost())
+                .databaseName(database.getDatabaseName())
                 .build();
     }
 }
