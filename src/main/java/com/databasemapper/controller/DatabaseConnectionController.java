@@ -53,4 +53,22 @@ public class DatabaseConnectionController {
             @Valid @RequestBody ConnectionRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(connectionService.create(databaseId, request));
     }
+
+    @Operation(summary = "Update a connection")
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "Connection updated"),
+        @ApiResponse(responseCode = "400", description = "Invalid request body or mode-specific fields missing",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "404", description = "Database or connection not found",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "500", description = "Unexpected error",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
+    @PutMapping("/{connectionId}")
+    public ResponseEntity<ConnectionResponse> update(
+            @PathVariable Long databaseId,
+            @PathVariable Long connectionId,
+            @Valid @RequestBody ConnectionRequest request) {
+        return ResponseEntity.ok(connectionService.update(databaseId, connectionId, request));
+    }
 }

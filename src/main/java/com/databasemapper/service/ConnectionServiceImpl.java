@@ -4,6 +4,7 @@ import com.databasemapper.dto.ConnectionRequest;
 import com.databasemapper.dto.ConnectionResponse;
 import com.databasemapper.model.Connection;
 import com.databasemapper.model.Database;
+import com.databasemapper.model.enums.ConnectionMode;
 import com.databasemapper.repository.ConnectionRepository;
 import com.databasemapper.repository.DatabaseRepository;
 import jakarta.persistence.EntityNotFoundException;
@@ -41,6 +42,32 @@ public class ConnectionServiceImpl implements ConnectionService {
         connection.setUsername(request.getUsername());
         connection.setPassword(request.getPassword());
         connection.setConnectionString(request.getConnectionString());
+
+        return toResponse(connectionRepository.save(connection));
+    }
+
+    @Override
+    public ConnectionResponse update(Long databaseId, Long connectionId, ConnectionRequest request) {
+        requireDatabase(databaseId);
+
+        Connection connection = connectionRepository
+                .findByConnectionIdAndDatabase_DatabaseId(connectionId, databaseId)
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "Connection not found with id: " + connectionId + " for database: " + databaseId));
+
+        connection.setConnectionMode(request.getConnectionMode());
+
+        if (request.getConnectionMode() == ConnectionMode.PARAMETERS) {
+            connection.setPort(request.getPort());
+            connection.setUsername(request.getUsername());
+            connection.setPassword(request.getPassword());
+            connection.setConnectionString(null);
+        } else {
+            connection.setConnectionString(request.getConnectionString());
+            connection.setPort(null);
+            connection.setUsername(null);
+            connection.setPassword(null);
+        }
 
         return toResponse(connectionRepository.save(connection));
     }
