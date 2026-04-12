@@ -8,4 +8,6 @@ import java.util.List;
 public interface ConnectionRepository extends JpaRepository<Connection, Long> {
 
     List<Connection> findAllByDatabase_DatabaseIdOrderByConnectionIdAsc(Long databaseId);
+
+    java.util.Optional<Connection> findByConnectionIdAndDatabase_DatabaseId(Long connectionId, Long databaseId);
 }

@@ -1,0 +1,2 @@
+ALTER TABLE connections
+    ALTER COLUMN port DROP NOT NULL;
