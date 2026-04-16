@@ -71,4 +71,39 @@ public class DatabaseConnectionController {
             @Valid @RequestBody ConnectionRequest request) {
         return ResponseEntity.ok(connectionService.update(databaseId, connectionId, request));
     }
+
+    @Operation(summary = "Test a connection without changing active state")
+    @ApiResponses({
+        @ApiResponse(responseCode = "204", description = "Connection successful"),
+        @ApiResponse(responseCode = "404", description = "Database or connection not found",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "422", description = "Could not connect to the target database",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "500", description = "Unexpected error",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
+    @PostMapping("/{connectionId}/test")
+    public ResponseEntity<Void> testConnection(
+            @PathVariable Long databaseId,
+            @PathVariable Long connectionId) {
+        connectionService.testConnection(databaseId, connectionId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @Operation(summary = "Connect: verify and set this connection as active for the database")
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "Connection verified and set as active"),
+        @ApiResponse(responseCode = "404", description = "Database or connection not found",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "422", description = "Could not connect to the target database — active state unchanged",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "500", description = "Unexpected error",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
+    @PostMapping("/{connectionId}/connect")
+    public ResponseEntity<ConnectionResponse> activateConnection(
+            @PathVariable Long databaseId,
+            @PathVariable Long connectionId) {
+        return ResponseEntity.ok(connectionService.activateConnection(databaseId, connectionId));
+    }
 }

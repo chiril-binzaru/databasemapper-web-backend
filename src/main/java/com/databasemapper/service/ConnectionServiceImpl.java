@@ -8,8 +8,14 @@ import com.databasemapper.model.enums.ConnectionMode;
 import com.databasemapper.repository.ConnectionRepository;
 import com.databasemapper.repository.DatabaseRepository;
 import jakarta.persistence.EntityNotFoundException;
+import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
+
+import java.sql.DriverManager;
+import java.sql.SQLException;
 
 import java.util.List;
 
@@ -50,10 +56,7 @@ public class ConnectionServiceImpl implements ConnectionService {
     public ConnectionResponse update(Long databaseId, Long connectionId, ConnectionRequest request) {
         requireDatabase(databaseId);
 
-        Connection connection = connectionRepository
-                .findByConnectionIdAndDatabase_DatabaseId(connectionId, databaseId)
-                .orElseThrow(() -> new EntityNotFoundException(
-                        "Connection not found with id: " + connectionId + " for database: " + databaseId));
+        Connection connection = requireConnection(connectionId, databaseId);
 
         connection.setConnectionMode(request.getConnectionMode());
 
@@ -72,9 +75,62 @@ public class ConnectionServiceImpl implements ConnectionService {
         return toResponse(connectionRepository.save(connection));
     }
 
+    @Override
+    public void testConnection(Long databaseId, Long connectionId) {
+        Database database = requireDatabase(databaseId);
+        Connection connection = requireConnection(connectionId, databaseId);
+        attemptJdbcConnection(database, connection);
+    }
+
+    @Transactional
+    @Override
+    public ConnectionResponse activateConnection(Long databaseId, Long connectionId) {
+        Database database = requireDatabase(databaseId);
+        Connection connection = requireConnection(connectionId, databaseId);
+
+        attemptJdbcConnection(database, connection);
+
+        connectionRepository.deactivateAllByDatabaseId(databaseId);
+        connection.setActive(true);
+        return toResponse(connectionRepository.save(connection));
+    }
+
+    private void attemptJdbcConnection(Database database, Connection connection) {
+        try {
+            if (connection.getConnectionMode() == ConnectionMode.CONNECTION_STRING) {
+                try (var ignored = DriverManager.getConnection(connection.getConnectionString())) { }
+            } else {
+                String url = buildJdbcUrl(database, connection);
+                try (var ignored = DriverManager.getConnection(url, connection.getUsername(), connection.getPassword())) { }
+            }
+        } catch (SQLException e) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "Could not connect to database: " + e.getMessage());
+        }
+    }
+
+    private String buildJdbcUrl(Database database, Connection connection) {
+        String host = database.getDatabaseHost();
+        int port = connection.getPort();
+        String dbName = database.getDatabaseName();
+        return switch (database.getDatabaseType()) {
+            case POSTGRESQL -> "jdbc:postgresql://%s:%d/%s".formatted(host, port, dbName);
+            case MYSQL      -> "jdbc:mysql://%s:%d/%s".formatted(host, port, dbName);
+            case ORACLE     -> "jdbc:oracle:thin:@//%s:%d/%s".formatted(host, port, dbName);
+            case SQL_SERVER -> "jdbc:sqlserver://%s:%d;databaseName=%s;encrypt=false".formatted(host, port, dbName);
+        };
+    }
+
     private Database requireDatabase(Long databaseId) {
         return databaseRepository.findById(databaseId)
                 .orElseThrow(() -> new EntityNotFoundException("Database not found with id: " + databaseId));
+    }
+
+    private Connection requireConnection(Long connectionId, Long databaseId) {
+        return connectionRepository
+                .findByConnectionIdAndDatabase_DatabaseId(connectionId, databaseId)
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "Connection not found with id: " + connectionId + " for database: " + databaseId));
     }
 
     private ConnectionResponse toResponse(Connection connection) {
