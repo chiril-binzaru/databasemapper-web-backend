@@ -12,4 +12,8 @@ public interface ConnectionService {
     ConnectionResponse create(Long databaseId, ConnectionRequest request);
 
     ConnectionResponse update(Long databaseId, Long connectionId, ConnectionRequest request);
+
+    void testConnection(Long databaseId, Long connectionId);
+
+    ConnectionResponse activateConnection(Long databaseId, Long connectionId);
 }
