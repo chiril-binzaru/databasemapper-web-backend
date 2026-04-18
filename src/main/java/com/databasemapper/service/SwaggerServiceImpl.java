@@ -7,7 +7,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestClient;
 
 import java.util.ArrayList;
@@ -19,35 +18,6 @@ public class SwaggerServiceImpl implements SwaggerService {
 
     private final ServiceRepository serviceRepository;
     private final RestClient restClient;
-
-    @Override
-    @Transactional
-    public JsonNode fetchAndSave(Long serviceId) {
-        com.databasemapper.model.Service service = serviceRepository.findById(serviceId)
-                .orElseThrow(() -> new EntityNotFoundException("Service not found with id: " + serviceId));
-
-        JsonNode swagger = fetchRawSwagger(service);
-        service.setLastFetchedSwagger(swagger);
-        serviceRepository.save(service);
-
-        return swagger;
-    }
-
-    @Override
-    @Transactional
-    public JsonNode commit(Long serviceId) {
-        com.databasemapper.model.Service service = serviceRepository.findById(serviceId)
-                .orElseThrow(() -> new EntityNotFoundException("Service not found with id: " + serviceId));
-
-        if (service.getLastFetchedSwagger() == null) {
-            throw new IllegalStateException("No fetched swagger to commit for service with id: " + serviceId);
-        }
-
-        service.setCommittedSwagger(service.getLastFetchedSwagger());
-        serviceRepository.save(service);
-
-        return service.getCommittedSwagger();
-    }
 
     @Override
     public List<SwaggerEndpointResponse> fetchSwaggerEndpoints(Long serviceId) {
