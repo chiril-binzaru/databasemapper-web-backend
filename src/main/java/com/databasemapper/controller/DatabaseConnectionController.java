@@ -72,6 +72,26 @@ public class DatabaseConnectionController {
         return ResponseEntity.ok(connectionService.update(databaseId, connectionId, request));
     }
 
+    @Operation(summary = "Test a connection from request data without saving it")
+    @ApiResponses({
+        @ApiResponse(responseCode = "204", description = "Connection successful"),
+        @ApiResponse(responseCode = "400", description = "Invalid request body or mode-specific fields missing",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "404", description = "Database not found",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "422", description = "Could not connect to the target database",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "500", description = "Unexpected error",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
+    @PostMapping("/test")
+    public ResponseEntity<Void> testConnectionFromRequest(
+            @PathVariable Long databaseId,
+            @Valid @RequestBody ConnectionRequest request) {
+        connectionService.testConnectionFromRequest(databaseId, request);
+        return ResponseEntity.noContent().build();
+    }
+
     @Operation(summary = "Delete a connection")
     @ApiResponses({
         @ApiResponse(responseCode = "204", description = "Connection deleted"),
