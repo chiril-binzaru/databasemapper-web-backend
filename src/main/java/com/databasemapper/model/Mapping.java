@@ -1,5 +1,6 @@
 package com.databasemapper.model;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
@@ -21,10 +22,7 @@ public class Mapping {
     @JoinColumn(name = "endpoint_id", nullable = false)
     private Endpoint endpoint;
 
-    @Column(name = "response_model_name", nullable = false)
-    private String responseModelName;
-
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "mapping_data", columnDefinition = "jsonb")
-    private String mappingData;
+    private JsonNode mappingData;
 }
