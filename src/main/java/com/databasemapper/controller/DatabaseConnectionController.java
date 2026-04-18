@@ -72,6 +72,22 @@ public class DatabaseConnectionController {
         return ResponseEntity.ok(connectionService.update(databaseId, connectionId, request));
     }
 
+    @Operation(summary = "Delete a connection")
+    @ApiResponses({
+        @ApiResponse(responseCode = "204", description = "Connection deleted"),
+        @ApiResponse(responseCode = "404", description = "Database or connection not found",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "500", description = "Unexpected error",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
+    @DeleteMapping("/{connectionId}")
+    public ResponseEntity<Void> delete(
+            @PathVariable Long databaseId,
+            @PathVariable Long connectionId) {
+        connectionService.delete(databaseId, connectionId);
+        return ResponseEntity.noContent().build();
+    }
+
     @Operation(summary = "Test a connection without changing active state")
     @ApiResponses({
         @ApiResponse(responseCode = "204", description = "Connection successful"),

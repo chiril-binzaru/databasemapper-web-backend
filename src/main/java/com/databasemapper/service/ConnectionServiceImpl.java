@@ -95,6 +95,13 @@ public class ConnectionServiceImpl implements ConnectionService {
         return toResponse(connectionRepository.save(connection));
     }
 
+    @Override
+    public void delete(Long databaseId, Long connectionId) {
+        requireDatabase(databaseId);
+        Connection connection = requireConnection(connectionId, databaseId);
+        connectionRepository.delete(connection);
+    }
+
     private void attemptJdbcConnection(Database database, Connection connection) {
         try {
             if (connection.getConnectionMode() == ConnectionMode.CONNECTION_STRING) {

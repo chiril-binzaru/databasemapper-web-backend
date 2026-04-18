@@ -16,4 +16,6 @@ public interface ConnectionService {
     void testConnection(Long databaseId, Long connectionId);
 
     ConnectionResponse activateConnection(Long databaseId, Long connectionId);
+
+    void delete(Long databaseId, Long connectionId);
 }
