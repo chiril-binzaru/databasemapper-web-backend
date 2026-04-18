@@ -96,6 +96,20 @@ public class ConnectionServiceImpl implements ConnectionService {
     }
 
     @Override
+    public void testConnectionFromRequest(Long databaseId, ConnectionRequest request) {
+        Database database = requireDatabase(databaseId);
+
+        Connection connection = new Connection();
+        connection.setConnectionMode(request.getConnectionMode());
+        connection.setPort(request.getPort());
+        connection.setUsername(request.getUsername());
+        connection.setPassword(request.getPassword());
+        connection.setConnectionString(request.getConnectionString());
+
+        attemptJdbcConnection(database, connection);
+    }
+
+    @Override
     public void delete(Long databaseId, Long connectionId) {
         requireDatabase(databaseId);
         Connection connection = requireConnection(connectionId, databaseId);
