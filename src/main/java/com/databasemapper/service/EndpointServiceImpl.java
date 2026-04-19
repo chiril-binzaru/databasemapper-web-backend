@@ -8,12 +8,14 @@ import com.databasemapper.model.enums.SyncStatus;
 import com.databasemapper.repository.EndpointRepository;
 import com.databasemapper.repository.MappingRepository;
 import com.databasemapper.repository.ServiceRepository;
+import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -117,6 +119,8 @@ public class EndpointServiceImpl implements EndpointService {
     public ServiceEndpointsResponse replaceEndpoints(Long serviceId, List<EndpointReplaceRequest> endpoints) {
         Service service = requireService(serviceId);
 
+        Map<String, JsonNode> responseModels = swaggerService.fetchResponseModels(serviceId);
+
         List<Long> endpointIds = endpointRepository
                 .findAllByService_ServiceIdOrderByEndpointPathAscHttpMethodAsc(serviceId)
                 .stream()
@@ -135,6 +139,7 @@ public class EndpointServiceImpl implements EndpointService {
                     e.setService(service);
                     e.setHttpMethod(req.getHttpMethod());
                     e.setEndpointPath(req.getPath());
+                    e.setResponseModel(responseModels.get(req.getHttpMethod() + ":" + req.getPath()));
                     return e;
                 })
                 .toList();
