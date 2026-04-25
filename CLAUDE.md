@@ -61,14 +61,14 @@ databasemapper-web-backend/
 
 ## Database Schema
 
-Five tables, applied via Flyway migrations V1–V7.
+Five tables, applied via Flyway migrations V1–V12.
 
 ```
 databases    (database_id, database_type, database_host, database_name)
-services     (service_id, database_id, service_name, service_base_url, swagger_endpoint, last_fetched_swagger JSONB, committed_swagger JSONB)
+services     (service_id, database_id, service_name, service_base_url, swagger_endpoint)
 connections  (connection_id, database_id, port, username, password, connection_string, connection_mode, is_active)
-endpoints    (endpoint_id, service_id, http_method, endpoint_path)
-mappings     (mapping_id, endpoint_id, response_model_name, mapping_data JSONB)
+endpoints    (endpoint_id, service_id, http_method, endpoint_path, response_model JSONB)
+mappings     (mapping_id, endpoint_id, mapping_data JSONB)
 ```
 
 ### Key relationships and design decisions
@@ -80,10 +80,8 @@ mappings     (mapping_id, endpoint_id, response_model_name, mapping_data JSONB)
 - `connections.connection_mode` — enum: `PARAMETERS` or `CONNECTION_STRING`; determines which fields are filled
 - `connections.username` and `connections.password` — nullable (not needed in CONNECTION_STRING mode)
 - `services.swagger_endpoint` — nullable; stores the path (e.g. `/v3/api-docs`); combined with `service_base_url` to fetch the OpenAPI spec
-- `services.last_fetched_swagger` — JSONB; updated every time `GET /api/v1/services/{id}/swagger` is called; represents the latest live spec
-- `services.committed_swagger` — JSONB; updated only on explicit `POST /api/v1/services/{id}/swagger/commit`; the stable snapshot mappings are anchored to
+- `endpoints.response_model` — JSONB; stores the committed response model snapshot (main model + nested models) anchored to the endpoint
 - `mappings.mapping_data` — JSONB; stores flexible mapping metadata (field↔column, primary keys, filter conditions, etc.)
-- `mappings.response_model_name` — human-readable label shown in UI (e.g. `UserResponse`)
 
 ### Flyway conventions
 - One table per migration file
