@@ -8,12 +8,16 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.List;
+import java.util.Optional;
 
 public interface ConnectionRepository extends JpaRepository<Connection, Long> {
 
     List<Connection> findAllByDatabase_DatabaseIdOrderByConnectionIdAsc(Long databaseId);
 
-    java.util.Optional<Connection> findByConnectionIdAndDatabase_DatabaseId(Long connectionId, Long databaseId);
+    Optional<Connection> findByConnectionIdAndDatabase_DatabaseId(Long connectionId, Long databaseId);
+
+    @Query("SELECT c FROM Connection c WHERE c.database.databaseId = :databaseId AND c.isActive = true")
+    Optional<Connection> findActiveByDatabaseId(@Param("databaseId") Long databaseId);
 
     @Modifying
     @Transactional
