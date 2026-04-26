@@ -1,5 +1,6 @@
 package com.databasemapper.service;
 
+import com.databasemapper.config.JdbcConnectionFactory;
 import com.databasemapper.dto.ConnectionRequest;
 import com.databasemapper.dto.ConnectionResponse;
 import com.databasemapper.model.Connection;
@@ -14,9 +15,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.sql.DriverManager;
 import java.sql.SQLException;
-
 import java.util.List;
 
 @Service
@@ -25,6 +24,7 @@ public class ConnectionServiceImpl implements ConnectionService {
 
     private final ConnectionRepository connectionRepository;
     private final DatabaseRepository databaseRepository;
+    private final JdbcConnectionFactory jdbcConnectionFactory;
 
     @Override
     public List<ConnectionResponse> getByDatabaseId(Long databaseId) {
@@ -117,29 +117,11 @@ public class ConnectionServiceImpl implements ConnectionService {
     }
 
     private void attemptJdbcConnection(Database database, Connection connection) {
-        try {
-            if (connection.getConnectionMode() == ConnectionMode.CONNECTION_STRING) {
-                try (var ignored = DriverManager.getConnection(connection.getConnectionString())) { }
-            } else {
-                String url = buildJdbcUrl(database, connection);
-                try (var ignored = DriverManager.getConnection(url, connection.getUsername(), connection.getPassword())) { }
-            }
+        try (var ignored = jdbcConnectionFactory.openConnection(database, connection)) {
         } catch (SQLException e) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "Could not connect to database: " + e.getMessage());
         }
-    }
-
-    private String buildJdbcUrl(Database database, Connection connection) {
-        String host = database.getDatabaseHost();
-        int port = connection.getPort();
-        String dbName = database.getDatabaseName();
-        return switch (database.getDatabaseType()) {
-            case POSTGRESQL -> "jdbc:postgresql://%s:%d/%s".formatted(host, port, dbName);
-            case MYSQL      -> "jdbc:mysql://%s:%d/%s".formatted(host, port, dbName);
-            case ORACLE     -> "jdbc:oracle:thin:@//%s:%d/%s".formatted(host, port, dbName);
-            case SQL_SERVER -> "jdbc:sqlserver://%s:%d;databaseName=%s;encrypt=false".formatted(host, port, dbName);
-        };
     }
 
     private Database requireDatabase(Long databaseId) {
