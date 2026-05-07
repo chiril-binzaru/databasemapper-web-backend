@@ -18,4 +18,7 @@ public class MappingDto {
     @NotNull
     @Valid
     private List<MappingFieldEntry> fieldMappings;
+
+    @Valid
+    private List<JoinEntryDto> joins;
 }

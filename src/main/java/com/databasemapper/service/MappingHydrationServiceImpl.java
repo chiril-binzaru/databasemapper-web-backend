@@ -1,0 +1,559 @@
+package com.databasemapper.service;
+
+import com.databasemapper.config.JdbcConnectionFactory;
+import com.databasemapper.dto.DataFetchRequest;
+import com.databasemapper.dto.FieldDatabaseInfo;
+import com.databasemapper.dto.JoinConditionPairDto;
+import com.databasemapper.dto.JoinEntryDto;
+import com.databasemapper.dto.MappingDto;
+import com.databasemapper.dto.MappingFieldEntry;
+import com.databasemapper.model.Database;
+import com.databasemapper.model.enums.FieldKind;
+import com.databasemapper.repository.ConnectionRepository;
+import com.databasemapper.repository.EndpointRepository;
+import com.databasemapper.repository.MappingRepository;
+import com.databasemapper.util.ColumnPath;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import jakarta.persistence.EntityNotFoundException;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
+
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
+import java.util.*;
+import java.util.stream.Collectors;
+
+@Service
+@RequiredArgsConstructor
+public class MappingHydrationServiceImpl implements MappingHydrationService {
+
+    private final EndpointRepository endpointRepository;
+    private final MappingRepository mappingRepository;
+    private final ConnectionRepository connectionRepository;
+    private final JdbcConnectionFactory jdbcConnectionFactory;
+    private final ObjectMapper objectMapper;
+
+    private record JoinStep(
+            String knownSideQuoted,
+            String newSideQuoted,
+            String newTableRef,
+            List<JoinConditionPairDto> additionalConditions
+    ) {}
+
+    private record ResolvedChildJoin(String parentColumnPath, String childColumnPath) {}
+
+    @Override
+    public JsonNode fetchData(Long endpointId, DataFetchRequest request) {
+        MappingDto mapping = loadMapping(endpointId);
+
+        var endpoint = endpointRepository.findByIdWithServiceAndDatabase(endpointId)
+                .orElseThrow(() -> new EntityNotFoundException("Endpoint not found with id: " + endpointId));
+
+        Database database = Optional.ofNullable(endpoint.getService().getDatabase())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "Endpoint's service has no linked database"));
+
+        var connection = connectionRepository.findActiveByDatabaseId(database.getDatabaseId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "No active connection for database id: " + database.getDatabaseId()));
+
+        Map<String, Object> columnFilters = resolveFilters(
+                request.getFilters() != null ? request.getFilters() : Map.of(),
+                mapping.getFieldMappings());
+
+        List<JoinEntryDto> globalJoins = mapping.getJoins() != null ? mapping.getJoins() : List.of();
+
+        try (java.sql.Connection conn = jdbcConnectionFactory.openConnection(database, connection)) {
+            ObjectNode result = hydrateNode(mapping.getFieldMappings(), columnFilters, conn, globalJoins);
+            if (result == null) {
+                throw new EntityNotFoundException("No data found matching the provided filters");
+            }
+            return result;
+        } catch (SQLException e) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "Failed to fetch data from database: " + e.getMessage());
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Core recursive hydration
+    // -------------------------------------------------------------------------
+
+    private ObjectNode hydrateNode(
+            List<MappingFieldEntry> fieldMappings,
+            Map<String, Object> whereConditions,
+            java.sql.Connection conn,
+            List<JoinEntryDto> globalJoins) throws SQLException {
+
+        // Tables this node queries from: WHERE columns + mapped VALUE field columns
+        Set<String> nodeTableKeys = new LinkedHashSet<>();
+        whereConditions.keySet().forEach(cp -> nodeTableKeys.add(ColumnPath.parse(cp).tableKey()));
+        fieldMappings.stream()
+                .filter(f -> f.getKind() == FieldKind.VALUE && columnPath(f) != null)
+                .forEach(f -> nodeTableKeys.add(ColumnPath.parse(columnPath(f)).tableKey()));
+
+        // Columns needed in the SELECT: mapped VALUE fields + parent-side of each child join
+        Set<String> columnPathsToSelect = new LinkedHashSet<>();
+        fieldMappings.stream()
+                .filter(f -> f.getKind() == FieldKind.VALUE && columnPath(f) != null)
+                .forEach(f -> columnPathsToSelect.add(columnPath(f)));
+
+        Map<String, ResolvedChildJoin> childJoins = resolveChildJoins(fieldMappings, nodeTableKeys, globalJoins);
+        childJoins.values().forEach(cj -> columnPathsToSelect.add(cj.parentColumnPath()));
+
+        if (columnPathsToSelect.isEmpty() && whereConditions.isEmpty()) {
+            return objectMapper.createObjectNode();
+        }
+
+        Map<String, Object> row = executeNodeQuery(columnPathsToSelect, whereConditions, globalJoins, conn);
+        if (row == null) return null;
+
+        ObjectNode result = objectMapper.createObjectNode();
+
+        // VALUE fields
+        for (MappingFieldEntry f : fieldMappings) {
+            if (f.getKind() != FieldKind.VALUE) continue;
+            String modelField = f.getServiceInfo().getModelField();
+            String cp = columnPath(f);
+            if (cp == null) {
+                result.putNull(modelField);
+            } else {
+                putValue(result, modelField, row.get(ColumnPath.parse(cp).columnAlias()));
+            }
+        }
+
+        // MODEL fields
+        for (MappingFieldEntry f : fieldMappings) {
+            if (f.getKind() != FieldKind.MODEL) continue;
+            String modelField = f.getServiceInfo().getModelField();
+            ResolvedChildJoin cj = childJoins.get(modelField);
+            if (cj == null) {
+                result.putNull(modelField);
+                continue;
+            }
+            Object parentValue = row.get(ColumnPath.parse(cj.parentColumnPath()).columnAlias());
+            if (parentValue == null) {
+                result.putNull(modelField);
+            } else {
+                ObjectNode nested = hydrateNode(
+                        f.getFieldMappings(), Map.of(cj.childColumnPath(), parentValue), conn, globalJoins);
+                result.set(modelField, nested != null ? nested : result.nullNode());
+            }
+        }
+
+        // LIST_OF_MODELS fields
+        for (MappingFieldEntry f : fieldMappings) {
+            if (f.getKind() != FieldKind.LIST_OF_MODELS) continue;
+            String modelField = f.getServiceInfo().getModelField();
+            ResolvedChildJoin cj = childJoins.get(modelField);
+            if (cj == null) {
+                result.set(modelField, objectMapper.createArrayNode());
+                continue;
+            }
+            Object parentValue = row.get(ColumnPath.parse(cj.parentColumnPath()).columnAlias());
+            result.set(modelField, parentValue == null
+                    ? objectMapper.createArrayNode()
+                    : hydrateModelList(f, cj.childColumnPath(), parentValue, conn, globalJoins));
+        }
+
+        // LIST_OF_VALUES fields
+        for (MappingFieldEntry f : fieldMappings) {
+            if (f.getKind() != FieldKind.LIST_OF_VALUES) continue;
+            String modelField = f.getServiceInfo().getModelField();
+            ResolvedChildJoin cj = childJoins.get(modelField);
+            if (cj == null) {
+                result.set(modelField, objectMapper.createArrayNode());
+                continue;
+            }
+            Object parentValue = row.get(ColumnPath.parse(cj.parentColumnPath()).columnAlias());
+            result.set(modelField, parentValue == null
+                    ? objectMapper.createArrayNode()
+                    : fetchValueList(f, cj.childColumnPath(), parentValue, conn));
+        }
+
+        return result;
+    }
+
+    private ArrayNode hydrateModelList(
+            MappingFieldEntry listField,
+            String joinChildColumnPath,
+            Object parentJoinValue,
+            java.sql.Connection conn,
+            List<JoinEntryDto> globalJoins) throws SQLException {
+
+        MappingFieldEntry pkField = listField.getFieldMappings().stream()
+                .filter(f -> f.getKind() == FieldKind.VALUE
+                        && f.getDatabaseInfo() != null
+                        && Boolean.TRUE.equals(f.getDatabaseInfo().getIsPrimaryKey())
+                        && f.getDatabaseInfo().getColumnPath() != null)
+                .findFirst()
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "No primary key field defined in LIST_OF_MODELS: "
+                        + listField.getServiceInfo().getModelName()));
+
+        String pkColumnPath = pkField.getDatabaseInfo().getColumnPath();
+        ColumnPath pkCol = ColumnPath.parse(pkColumnPath);
+        ColumnPath joinChildCol = ColumnPath.parse(joinChildColumnPath);
+
+        if (!pkCol.tableKey().equals(joinChildCol.tableKey())) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "PK column and join condition column must be in the same table for LIST_OF_MODELS");
+        }
+
+        String sql = "SELECT DISTINCT " + pkCol.quotedFull()
+                + " FROM " + pkCol.quotedTableRef()
+                + " WHERE " + joinChildCol.quotedFull() + " = ?";
+
+        List<Object> pkValues = new ArrayList<>();
+        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setObject(1, parentJoinValue);
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) pkValues.add(rs.getObject(1));
+            }
+        }
+
+        ArrayNode array = objectMapper.createArrayNode();
+        for (Object pkValue : pkValues) {
+            ObjectNode childNode = hydrateNode(
+                    listField.getFieldMappings(), Map.of(pkColumnPath, pkValue), conn, globalJoins);
+            if (childNode != null) array.add(childNode);
+        }
+        return array;
+    }
+
+    private ArrayNode fetchValueList(
+            MappingFieldEntry field,
+            String joinChildColumnPath,
+            Object parentJoinValue,
+            java.sql.Connection conn) throws SQLException {
+
+        String cp = columnPath(field);
+        ColumnPath valueCol = ColumnPath.parse(cp);
+        ColumnPath joinChildCol = ColumnPath.parse(joinChildColumnPath);
+
+        if (!valueCol.tableKey().equals(joinChildCol.tableKey())) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "LIST_OF_VALUES column and join condition column must be in the same table");
+        }
+
+        String sql = "SELECT " + valueCol.quotedFull()
+                + " FROM " + valueCol.quotedTableRef()
+                + " WHERE " + joinChildCol.quotedFull() + " = ?";
+
+        ArrayNode array = objectMapper.createArrayNode();
+        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setObject(1, parentJoinValue);
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) addValue(array, rs.getObject(1));
+            }
+        }
+        return array;
+    }
+
+    // -------------------------------------------------------------------------
+    // Query building
+    // -------------------------------------------------------------------------
+
+    private Map<String, Object> executeNodeQuery(
+            Set<String> columnPathsToSelect,
+            Map<String, Object> whereConditions,
+            List<JoinEntryDto> globalJoins,
+            java.sql.Connection conn) throws SQLException {
+
+        if (whereConditions.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "At least one filter condition is required");
+        }
+
+        List<ColumnPath> selectCols = columnPathsToSelect.stream().map(ColumnPath::parse).toList();
+        List<ColumnPath> whereCols = whereConditions.keySet().stream().map(ColumnPath::parse).toList();
+
+        ColumnPath anchorWherePath = whereCols.get(0);
+        String anchorTableKey = anchorWherePath.tableKey();
+
+        Set<String> allTableKeys = new LinkedHashSet<>();
+        allTableKeys.add(anchorTableKey);
+        selectCols.forEach(c -> allTableKeys.add(c.tableKey()));
+        whereCols.forEach(c -> allTableKeys.add(c.tableKey()));
+
+        List<JoinStep> joinSteps = resolveJoinOrder(anchorTableKey, allTableKeys, globalJoins);
+
+        StringBuilder sql = new StringBuilder("SELECT ");
+        if (selectCols.isEmpty()) {
+            sql.append("1");
+        } else {
+            sql.append(selectCols.stream()
+                    .map(c -> c.quotedFull() + " AS \"" + c.columnAlias() + "\"")
+                    .collect(Collectors.joining(", ")));
+        }
+
+        sql.append(" FROM ").append(anchorWherePath.quotedTableRef());
+
+        // Params collected in SQL order: JOIN condition literals first, then WHERE values
+        List<Object> params = new ArrayList<>();
+
+        for (JoinStep step : joinSteps) {
+            sql.append(" JOIN ").append(step.newTableRef())
+               .append(" ON ").append(step.knownSideQuoted()).append(" = ").append(step.newSideQuoted());
+            if (step.additionalConditions() != null) {
+                for (JoinConditionPairDto addCond : step.additionalConditions()) {
+                    appendAdditionalCondition(sql, params, addCond);
+                }
+            }
+        }
+
+        List<String> whereParts = new ArrayList<>();
+        for (Map.Entry<String, Object> entry : whereConditions.entrySet()) {
+            whereParts.add(ColumnPath.parse(entry.getKey()).quotedFull() + " = ?");
+            params.add(entry.getValue());
+        }
+        sql.append(" WHERE ").append(String.join(" AND ", whereParts));
+
+        try (PreparedStatement stmt = conn.prepareStatement(sql.toString())) {
+            for (int i = 0; i < params.size(); i++) {
+                stmt.setObject(i + 1, params.get(i));
+            }
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (!rs.next()) return null;
+                Map<String, Object> row = new LinkedHashMap<>();
+                ResultSetMetaData meta = rs.getMetaData();
+                for (int i = 1; i <= meta.getColumnCount(); i++) {
+                    row.put(meta.getColumnLabel(i), rs.getObject(i));
+                }
+                return row;
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Join resolution
+    // -------------------------------------------------------------------------
+
+    private Map<String, ResolvedChildJoin> resolveChildJoins(
+            List<MappingFieldEntry> fieldMappings,
+            Set<String> nodeTableKeys,
+            List<JoinEntryDto> globalJoins) {
+
+        Map<String, ResolvedChildJoin> result = new LinkedHashMap<>();
+
+        for (MappingFieldEntry f : fieldMappings) {
+            Set<String> childTableKeys = switch (f.getKind()) {
+                case MODEL, LIST_OF_MODELS -> tableKeysFromValueFields(f.getFieldMappings());
+                case LIST_OF_VALUES -> columnPath(f) != null
+                        ? Set.of(ColumnPath.parse(columnPath(f)).tableKey())
+                        : Set.of();
+                default -> Set.of();
+            };
+
+            if (childTableKeys.isEmpty()) continue;
+
+            JoinEntryDto join = findParentChildJoin(nodeTableKeys, childTableKeys, globalJoins);
+            if (join == null) continue;
+
+            result.put(f.getServiceInfo().getModelField(), new ResolvedChildJoin(
+                    parentSide(join, nodeTableKeys),
+                    childSide(join, nodeTableKeys)
+            ));
+        }
+        return result;
+    }
+
+    private JoinEntryDto findParentChildJoin(
+            Set<String> parentTableKeys,
+            Set<String> childTableKeys,
+            List<JoinEntryDto> globalJoins) {
+
+        for (JoinEntryDto join : globalJoins) {
+            ColumnPath left = ColumnPath.parse(join.getLeft());
+            ColumnPath right = ColumnPath.parse(join.getRight());
+            boolean leftInParent = parentTableKeys.contains(left.tableKey());
+            boolean rightInChild = childTableKeys.contains(right.tableKey());
+            boolean rightInParent = parentTableKeys.contains(right.tableKey());
+            boolean leftInChild = childTableKeys.contains(left.tableKey());
+
+            if ((leftInParent && rightInChild) || (rightInParent && leftInChild)) {
+                return join;
+            }
+        }
+        return null;
+    }
+
+    private String parentSide(JoinEntryDto join, Set<String> parentTableKeys) {
+        ColumnPath left = ColumnPath.parse(join.getLeft());
+        return parentTableKeys.contains(left.tableKey()) ? join.getLeft() : join.getRight();
+    }
+
+    private String childSide(JoinEntryDto join, Set<String> parentTableKeys) {
+        ColumnPath left = ColumnPath.parse(join.getLeft());
+        return parentTableKeys.contains(left.tableKey()) ? join.getRight() : join.getLeft();
+    }
+
+    // BFS from anchor to reach every referenced table via the global joins list
+    private List<JoinStep> resolveJoinOrder(
+            String anchorTableKey,
+            Set<String> allTableKeys,
+            List<JoinEntryDto> globalJoins) {
+
+        List<JoinStep> steps = new ArrayList<>();
+        Set<String> inFrom = new LinkedHashSet<>();
+        inFrom.add(anchorTableKey);
+
+        Set<String> remaining = new LinkedHashSet<>(allTableKeys);
+        remaining.remove(anchorTableKey);
+
+        int maxPasses = remaining.size() + 1;
+        for (int pass = 0; pass < maxPasses && !remaining.isEmpty(); pass++) {
+            Iterator<String> it = remaining.iterator();
+            while (it.hasNext()) {
+                String tableKey = it.next();
+                JoinEntryDto join = findDirectJoin(tableKey, inFrom, globalJoins);
+                if (join == null) continue;
+
+                ColumnPath left = ColumnPath.parse(join.getLeft());
+                ColumnPath right = ColumnPath.parse(join.getRight());
+                boolean rightIsNew = right.tableKey().equals(tableKey);
+
+                steps.add(new JoinStep(
+                        rightIsNew ? left.quotedFull() : right.quotedFull(),
+                        rightIsNew ? right.quotedFull() : left.quotedFull(),
+                        rightIsNew ? right.quotedTableRef() : left.quotedTableRef(),
+                        join.getAdditionalJoinConditions()
+                ));
+                inFrom.add(tableKey);
+                it.remove();
+            }
+        }
+
+        if (!remaining.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "No join path found for tables: " + remaining
+                    + ". Add the required join conditions to the mapping.");
+        }
+        return steps;
+    }
+
+    private JoinEntryDto findDirectJoin(
+            String targetTableKey,
+            Set<String> knownTables,
+            List<JoinEntryDto> globalJoins) {
+
+        for (JoinEntryDto join : globalJoins) {
+            ColumnPath left = ColumnPath.parse(join.getLeft());
+            ColumnPath right = ColumnPath.parse(join.getRight());
+            boolean leftKnown = knownTables.contains(left.tableKey());
+            boolean rightKnown = knownTables.contains(right.tableKey());
+            boolean leftIsTarget = left.tableKey().equals(targetTableKey);
+            boolean rightIsTarget = right.tableKey().equals(targetTableKey);
+
+            if ((leftKnown && rightIsTarget) || (rightKnown && leftIsTarget)) {
+                return join;
+            }
+        }
+        return null;
+    }
+
+    private void appendAdditionalCondition(StringBuilder sql, List<Object> params, JoinConditionPairDto cond) {
+        sql.append(" AND ")
+           .append(ColumnPath.parse(cond.getLeft()).quotedFull())
+           .append(" ").append(cond.getOperator().toSql()).append(" ");
+
+        if (cond.getRight() != null) {
+            sql.append(ColumnPath.parse(cond.getRight()).quotedFull());
+        } else if (cond.getRightLiteral() != null) {
+            sql.append("?");
+            params.add(cond.getRightLiteral());
+        } else {
+            String placeholders = cond.getRightValues().stream()
+                    .map(v -> "?")
+                    .collect(Collectors.joining(", "));
+            sql.append("(").append(placeholders).append(")");
+            params.addAll(cond.getRightValues());
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+
+    private String columnPath(MappingFieldEntry f) {
+        FieldDatabaseInfo db = f.getDatabaseInfo();
+        return db != null ? db.getColumnPath() : null;
+    }
+
+    private Set<String> tableKeysFromValueFields(List<MappingFieldEntry> fieldMappings) {
+        return fieldMappings.stream()
+                .filter(f -> f.getKind() == FieldKind.VALUE && columnPath(f) != null)
+                .map(f -> ColumnPath.parse(columnPath(f)).tableKey())
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    private Map<String, Object> resolveFilters(
+            Map<String, Object> filters,
+            List<MappingFieldEntry> rootFieldMappings) {
+
+        if (filters.isEmpty()) return Map.of();
+
+        Map<String, Object> resolved = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> entry : filters.entrySet()) {
+            String modelField = entry.getKey();
+            String cp = rootFieldMappings.stream()
+                    .filter(f -> f.getKind() == FieldKind.VALUE
+                            && modelField.equals(f.getServiceInfo().getModelField()))
+                    .map(this::columnPath)
+                    .filter(Objects::nonNull)
+                    .findFirst()
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                            "Filter field not found in mapping: " + modelField));
+            resolved.put(cp, entry.getValue());
+        }
+        return resolved;
+    }
+
+    private void putValue(ObjectNode node, String fieldName, Object value) {
+        if (value == null) {
+            node.putNull(fieldName);
+        } else if (value instanceof java.sql.Timestamp ts) {
+            node.put(fieldName, ts.toInstant().toString());
+        } else if (value instanceof java.sql.Date d) {
+            node.put(fieldName, d.toLocalDate().toString());
+        } else if (value instanceof java.sql.Time t) {
+            node.put(fieldName, t.toLocalTime().toString());
+        } else {
+            node.set(fieldName, objectMapper.convertValue(value, JsonNode.class));
+        }
+    }
+
+    private void addValue(ArrayNode array, Object value) {
+        if (value == null) {
+            array.addNull();
+        } else if (value instanceof java.sql.Timestamp ts) {
+            array.add(ts.toInstant().toString());
+        } else if (value instanceof java.sql.Date d) {
+            array.add(d.toLocalDate().toString());
+        } else if (value instanceof java.sql.Time t) {
+            array.add(t.toLocalTime().toString());
+        } else {
+            array.add(objectMapper.convertValue(value, JsonNode.class));
+        }
+    }
+
+    private MappingDto loadMapping(Long endpointId) {
+        return mappingRepository.findByEndpoint_EndpointId(endpointId)
+                .map(mapping -> {
+                    try {
+                        return objectMapper.treeToValue(mapping.getMappingData(), MappingDto.class);
+                    } catch (JsonProcessingException e) {
+                        throw new IllegalStateException("Stored mapping data could not be deserialized", e);
+                    }
+                })
+                .orElseThrow(() -> new EntityNotFoundException("Mapping not found for endpoint id: " + endpointId));
+    }
+}
