@@ -3,10 +3,11 @@ package com.databasemapper.dto;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.util.Map;
+
 @Getter
 @Setter
-public class JoinConditionDto {
+public class DataFetchRequest {
 
-    private String parentColumn;
-    private String childColumn;
+    private Map<String, Object> filters;
 }
