@@ -14,5 +14,5 @@ public class FieldDatabaseInfo {
     private String columnType;
 
     // null for LIST_OF_VALUES
-    private Boolean isPrimaryKey;
+    private Boolean primaryKey;
 }

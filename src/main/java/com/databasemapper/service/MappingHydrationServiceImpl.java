@@ -192,7 +192,7 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
         MappingFieldEntry pkField = listField.getFieldMappings().stream()
                 .filter(f -> f.getKind() == FieldKind.VALUE
                         && f.getDatabaseInfo() != null
-                        && Boolean.TRUE.equals(f.getDatabaseInfo().getIsPrimaryKey())
+                        && Boolean.TRUE.equals(f.getDatabaseInfo().getPrimaryKey())
                         && f.getDatabaseInfo().getColumnPath() != null)
                 .findFirst()
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,

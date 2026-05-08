@@ -11,4 +11,5 @@ public class DbColumnResponse {
     private boolean nullable;
     private int ordinalPosition;
     private String columnDefault;
+    private boolean primaryKey;
 }
