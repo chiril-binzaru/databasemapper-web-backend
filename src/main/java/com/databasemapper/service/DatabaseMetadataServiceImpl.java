@@ -18,7 +18,9 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -105,11 +107,21 @@ public class DatabaseMetadataServiceImpl implements DatabaseMetadataService {
 
     private List<DbColumnResponse> queryColumnsSql(java.sql.Connection conn, String schemaName, String tableName) throws SQLException {
         String sql = """
-                SELECT column_name, data_type, is_nullable, ordinal_position, column_default
-                FROM information_schema.columns
-                WHERE table_schema = ?
-                  AND table_name = ?
-                ORDER BY ordinal_position
+                SELECT c.column_name, c.data_type, c.is_nullable, c.ordinal_position, c.column_default,
+                       CASE WHEN kcu.column_name IS NOT NULL THEN true ELSE false END AS is_primary_key
+                FROM information_schema.columns c
+                LEFT JOIN information_schema.table_constraints tc
+                    ON tc.table_schema = c.table_schema
+                   AND tc.table_name   = c.table_name
+                   AND tc.constraint_type = 'PRIMARY KEY'
+                LEFT JOIN information_schema.key_column_usage kcu
+                    ON kcu.constraint_name = tc.constraint_name
+                   AND kcu.table_schema    = c.table_schema
+                   AND kcu.table_name      = c.table_name
+                   AND kcu.column_name     = c.column_name
+                WHERE c.table_schema = ?
+                  AND c.table_name   = ?
+                ORDER BY c.ordinal_position
                 """;
         try (PreparedStatement stmt = conn.prepareStatement(sql)) {
             stmt.setString(1, schemaName);
@@ -123,6 +135,7 @@ public class DatabaseMetadataServiceImpl implements DatabaseMetadataService {
                             .nullable("YES".equals(rs.getString("is_nullable")))
                             .ordinalPosition(rs.getInt("ordinal_position"))
                             .columnDefault(rs.getString("column_default"))
+                            .primaryKey(rs.getBoolean("is_primary_key"))
                             .build());
                 }
                 return result;
@@ -163,16 +176,24 @@ public class DatabaseMetadataServiceImpl implements DatabaseMetadataService {
         DatabaseMetaData meta = conn.getMetaData();
         String catalog = isCatalog ? schemaName : null;
         String schema  = isCatalog ? null : schemaName;
+
+        Set<String> pkColumns = new HashSet<>();
+        try (ResultSet pkRs = meta.getPrimaryKeys(catalog, schema, tableName)) {
+            while (pkRs.next()) pkColumns.add(pkRs.getString("COLUMN_NAME"));
+        }
+
         List<DbColumnResponse> result = new ArrayList<>();
         try (ResultSet rs = meta.getColumns(catalog, schema, tableName, "%")) {
             int position = 0;
             while (rs.next()) {
+                String columnName = rs.getString("COLUMN_NAME");
                 result.add(DbColumnResponse.builder()
-                        .name(rs.getString("COLUMN_NAME"))
+                        .name(columnName)
                         .dataType(rs.getString("TYPE_NAME"))
                         .nullable(rs.getInt("NULLABLE") == DatabaseMetaData.columnNullable)
                         .ordinalPosition(++position)
                         .columnDefault(rs.getString("COLUMN_DEF"))
+                        .primaryKey(pkColumns.contains(columnName))
                         .build());
             }
         }
