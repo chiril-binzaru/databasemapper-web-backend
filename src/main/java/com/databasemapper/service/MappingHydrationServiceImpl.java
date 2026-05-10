@@ -189,15 +189,36 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
             java.sql.Connection conn,
             List<JoinEntryDto> globalJoins) throws SQLException {
 
-        MappingFieldEntry pkField = listField.getFieldMappings().stream()
+        Optional<MappingFieldEntry> pkFieldOpt = listField.getFieldMappings().stream()
                 .filter(f -> f.getKind() == FieldKind.VALUE
                         && f.getDatabaseInfo() != null
                         && Boolean.TRUE.equals(f.getDatabaseInfo().getPrimaryKey())
                         && f.getDatabaseInfo().getColumnPath() != null)
-                .findFirst()
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "No primary key field defined in LIST_OF_MODELS: "
-                        + listField.getServiceInfo().getModelName()));
+                .findFirst();
+
+        if (pkFieldOpt.isPresent()) {
+            return hydrateModelListByPk(listField, pkFieldOpt.get(), joinChildColumnPath, parentJoinValue, conn, globalJoins);
+        }
+
+        boolean hasNestedModelFields = listField.getFieldMappings().stream()
+                .anyMatch(f -> f.getKind() == FieldKind.MODEL || f.getKind() == FieldKind.LIST_OF_MODELS);
+        if (hasNestedModelFields) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "No primary key field defined in LIST_OF_MODELS: "
+                    + listField.getServiceInfo().getModelName()
+                    + ". A primary key is required when list items contain nested MODEL or LIST_OF_MODELS fields.");
+        }
+
+        return hydrateModelListByJoinColumn(listField, joinChildColumnPath, parentJoinValue, conn, globalJoins);
+    }
+
+    private ArrayNode hydrateModelListByPk(
+            MappingFieldEntry listField,
+            MappingFieldEntry pkField,
+            String joinChildColumnPath,
+            Object parentJoinValue,
+            java.sql.Connection conn,
+            List<JoinEntryDto> globalJoins) throws SQLException {
 
         String pkColumnPath = pkField.getDatabaseInfo().getColumnPath();
         ColumnPath pkCol = ColumnPath.parse(pkColumnPath);
@@ -225,6 +246,64 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
             ObjectNode childNode = hydrateNode(
                     listField.getFieldMappings(), Map.of(pkColumnPath, pkValue), conn, globalJoins);
             if (childNode != null) array.add(childNode);
+        }
+        return array;
+    }
+
+    private ArrayNode hydrateModelListByJoinColumn(
+            MappingFieldEntry listField,
+            String joinChildColumnPath,
+            Object parentJoinValue,
+            java.sql.Connection conn,
+            List<JoinEntryDto> globalJoins) throws SQLException {
+
+        Set<String> nodeTableKeys = new LinkedHashSet<>();
+        nodeTableKeys.add(ColumnPath.parse(joinChildColumnPath).tableKey());
+
+        Set<String> columnPathsToSelect = new LinkedHashSet<>();
+        listField.getFieldMappings().stream()
+                .filter(f -> f.getKind() == FieldKind.VALUE && columnPath(f) != null)
+                .forEach(f -> {
+                    columnPathsToSelect.add(columnPath(f));
+                    nodeTableKeys.add(ColumnPath.parse(columnPath(f)).tableKey());
+                });
+
+        Map<String, ResolvedChildJoin> childJoins = resolveChildJoins(listField.getFieldMappings(), nodeTableKeys, globalJoins);
+        childJoins.values().forEach(cj -> columnPathsToSelect.add(cj.parentColumnPath()));
+
+        List<Map<String, Object>> rows = executeNodeQueryAll(
+                columnPathsToSelect, Map.of(joinChildColumnPath, parentJoinValue), globalJoins, conn);
+
+        ArrayNode array = objectMapper.createArrayNode();
+        for (Map<String, Object> row : rows) {
+            ObjectNode node = objectMapper.createObjectNode();
+
+            for (MappingFieldEntry f : listField.getFieldMappings()) {
+                if (f.getKind() != FieldKind.VALUE) continue;
+                String modelField = f.getServiceInfo().getModelField();
+                String cp = columnPath(f);
+                if (cp == null) {
+                    node.putNull(modelField);
+                } else {
+                    putValue(node, modelField, row.get(ColumnPath.parse(cp).columnAlias()));
+                }
+            }
+
+            for (MappingFieldEntry f : listField.getFieldMappings()) {
+                if (f.getKind() != FieldKind.LIST_OF_VALUES) continue;
+                String modelField = f.getServiceInfo().getModelField();
+                ResolvedChildJoin cj = childJoins.get(modelField);
+                if (cj == null) {
+                    node.set(modelField, objectMapper.createArrayNode());
+                    continue;
+                }
+                Object parentVal = row.get(ColumnPath.parse(cj.parentColumnPath()).columnAlias());
+                node.set(modelField, parentVal == null
+                        ? objectMapper.createArrayNode()
+                        : fetchValueList(f, cj.childColumnPath(), parentVal, conn));
+            }
+
+            array.add(node);
         }
         return array;
     }
@@ -262,11 +341,12 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
     // Query building
     // -------------------------------------------------------------------------
 
-    private Map<String, Object> executeNodeQuery(
+    private record BuiltQuery(String sql, List<Object> params) {}
+
+    private BuiltQuery buildNodeQuery(
             Set<String> columnPathsToSelect,
             Map<String, Object> whereConditions,
-            List<JoinEntryDto> globalJoins,
-            java.sql.Connection conn) throws SQLException {
+            List<JoinEntryDto> globalJoins) {
 
         if (whereConditions.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
@@ -317,9 +397,19 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
         }
         sql.append(" WHERE ").append(String.join(" AND ", whereParts));
 
-        try (PreparedStatement stmt = conn.prepareStatement(sql.toString())) {
-            for (int i = 0; i < params.size(); i++) {
-                stmt.setObject(i + 1, params.get(i));
+        return new BuiltQuery(sql.toString(), params);
+    }
+
+    private Map<String, Object> executeNodeQuery(
+            Set<String> columnPathsToSelect,
+            Map<String, Object> whereConditions,
+            List<JoinEntryDto> globalJoins,
+            java.sql.Connection conn) throws SQLException {
+
+        BuiltQuery q = buildNodeQuery(columnPathsToSelect, whereConditions, globalJoins);
+        try (PreparedStatement stmt = conn.prepareStatement(q.sql())) {
+            for (int i = 0; i < q.params().size(); i++) {
+                stmt.setObject(i + 1, q.params().get(i));
             }
             try (ResultSet rs = stmt.executeQuery()) {
                 if (!rs.next()) return null;
@@ -331,6 +421,32 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
                 return row;
             }
         }
+    }
+
+    private List<Map<String, Object>> executeNodeQueryAll(
+            Set<String> columnPathsToSelect,
+            Map<String, Object> whereConditions,
+            List<JoinEntryDto> globalJoins,
+            java.sql.Connection conn) throws SQLException {
+
+        BuiltQuery q = buildNodeQuery(columnPathsToSelect, whereConditions, globalJoins);
+        List<Map<String, Object>> results = new ArrayList<>();
+        try (PreparedStatement stmt = conn.prepareStatement(q.sql())) {
+            for (int i = 0; i < q.params().size(); i++) {
+                stmt.setObject(i + 1, q.params().get(i));
+            }
+            try (ResultSet rs = stmt.executeQuery()) {
+                ResultSetMetaData meta = rs.getMetaData();
+                while (rs.next()) {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    for (int i = 1; i <= meta.getColumnCount(); i++) {
+                        row.put(meta.getColumnLabel(i), rs.getObject(i));
+                    }
+                    results.add(row);
+                }
+            }
+        }
+        return results;
     }
 
     // -------------------------------------------------------------------------
