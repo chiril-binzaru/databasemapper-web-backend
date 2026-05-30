@@ -8,6 +8,7 @@ import com.databasemapper.dto.JoinEntryDto;
 import com.databasemapper.dto.MappingDto;
 import com.databasemapper.dto.MappingFieldEntry;
 import com.databasemapper.model.Database;
+import com.databasemapper.model.HttpMethod;
 import com.databasemapper.model.enums.FieldKind;
 import com.databasemapper.repository.ConnectionRepository;
 import com.databasemapper.repository.EndpointRepository;
@@ -49,6 +50,17 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
     ) {}
 
     private record ResolvedChildJoin(String parentColumnPath, String childColumnPath) {}
+
+    @Override
+    public JsonNode fetchData(String serviceName, String endpointPath, HttpMethod httpMethod, DataFetchRequest request) {
+        Long endpointId = endpointRepository
+                .findByServiceNameAndEndpointPathAndHttpMethod(serviceName, endpointPath, httpMethod)
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "Endpoint not found for service '%s', path '%s', method '%s'"
+                        .formatted(serviceName, endpointPath, httpMethod)))
+                .getEndpointId();
+        return fetchData(endpointId, request);
+    }
 
     @Override
     public JsonNode fetchData(Long endpointId, DataFetchRequest request) {

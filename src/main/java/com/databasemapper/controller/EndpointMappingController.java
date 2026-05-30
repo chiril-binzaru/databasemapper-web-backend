@@ -1,10 +1,8 @@
 package com.databasemapper.controller;
 
-import com.databasemapper.dto.DataFetchRequest;
 import com.databasemapper.dto.ErrorResponse;
 import com.databasemapper.dto.MappingDto;
 import com.databasemapper.service.EndpointMappingService;
-import com.databasemapper.service.MappingHydrationService;
 import com.fasterxml.jackson.databind.JsonNode;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -23,7 +21,6 @@ import org.springframework.web.bind.annotation.*;
 public class EndpointMappingController {
 
     private final EndpointMappingService endpointMappingService;
-    private final MappingHydrationService mappingHydrationService;
 
     @Operation(summary = "Get mapping data for an endpoint")
     @ApiResponses({
@@ -88,22 +85,4 @@ public class EndpointMappingController {
         return ResponseEntity.ok(endpointMappingService.getResponseModel(endpointId));
     }
 
-    @Operation(summary = "Fetch database data hydrated as the endpoint's model")
-    @ApiResponses({
-        @ApiResponse(responseCode = "200", description = "Data returned as hydrated model JSON"),
-        @ApiResponse(responseCode = "400", description = "Invalid or missing filter fields",
-            content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
-        @ApiResponse(responseCode = "404", description = "Endpoint, mapping, or matching data not found",
-            content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
-        @ApiResponse(responseCode = "422", description = "Database connection or query failure",
-            content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
-        @ApiResponse(responseCode = "500", description = "Unexpected error",
-            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
-    })
-    @PostMapping("/data")
-    public ResponseEntity<JsonNode> fetchData(
-            @PathVariable Long endpointId,
-            @RequestBody DataFetchRequest request) {
-        return ResponseEntity.ok(mappingHydrationService.fetchData(endpointId, request));
-    }
 }
