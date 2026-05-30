@@ -26,6 +26,11 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ErrorResponse> handleDataIntegrityViolation(DataIntegrityViolationException ex) {
+        if (ex.getMessage() != null && ex.getMessage().contains("uq_endpoints_service_path_method")) {
+            return buildResponse(HttpStatus.CONFLICT,
+                    "An endpoint with the same path and HTTP method already exists for this service. " +
+                    "If you meant an existing endpoint, send its actual id instead of null.");
+        }
         return buildResponse(HttpStatus.CONFLICT, ex.getMessage());
     }
 
