@@ -11,6 +11,8 @@ import lombok.Setter;
 @Setter
 public class EndpointReplaceRequest {
 
+    private Long endpointId;
+
     @NotNull
     private HttpMethod httpMethod;
 

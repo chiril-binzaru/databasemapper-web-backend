@@ -16,5 +16,5 @@ public class EndpointRequest {
 
     @NotBlank
     @Size(max = 255)
-    private String endpointPath;
+    private String path;
 }

@@ -10,5 +10,5 @@ public class EndpointResponse {
 
     private Long endpointId;
     private HttpMethod httpMethod;
-    private String endpointPath;
+    private String path;
 }

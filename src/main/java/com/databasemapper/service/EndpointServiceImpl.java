@@ -11,11 +11,14 @@ import com.databasemapper.repository.ServiceRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -41,7 +44,7 @@ public class EndpointServiceImpl implements EndpointService {
         Endpoint endpoint = new Endpoint();
         endpoint.setService(service);
         endpoint.setHttpMethod(request.getHttpMethod());
-        endpoint.setEndpointPath(request.getEndpointPath());
+        endpoint.setEndpointPath(request.getPath());
 
         endpointRepository.save(endpoint);
 
@@ -121,29 +124,80 @@ public class EndpointServiceImpl implements EndpointService {
 
         Map<String, JsonNode> responseModels = swaggerService.fetchResponseModels(serviceId);
 
-        List<Long> endpointIds = endpointRepository
+        Map<Long, Endpoint> dbEndpointsById = endpointRepository
                 .findAllByService_ServiceIdOrderByEndpointPathAscHttpMethodAsc(serviceId)
                 .stream()
-                .map(Endpoint::getEndpointId)
-                .toList();
+                .collect(Collectors.toMap(Endpoint::getEndpointId, e -> e));
 
-        if (!endpointIds.isEmpty()) {
-            mappingRepository.deleteByEndpoint_EndpointIdIn(endpointIds);
+        Set<Long> requestIds = endpoints.stream()
+                .map(EndpointReplaceRequest::getEndpointId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+
+        Set<Long> foreignIds = requestIds.stream()
+                .filter(id -> !dbEndpointsById.containsKey(id))
+                .collect(Collectors.toSet());
+        if (!foreignIds.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Endpoint IDs do not belong to service " + serviceId + ": " + foreignIds);
         }
 
-        endpointRepository.deleteByService_ServiceId(serviceId);
+        for (EndpointReplaceRequest req : endpoints) {
+            if (req.getEndpointId() != null) continue;
+            dbEndpointsById.values().stream()
+                    .filter(e -> e.getHttpMethod() == req.getHttpMethod()
+                              && e.getEndpointPath().equals(req.getPath()))
+                    .findFirst()
+                    .ifPresent(e -> {
+                        throw new ResponseStatusException(HttpStatus.CONFLICT,
+                                req.getHttpMethod().name() + " endpoint '" + req.getPath() +
+                                "' is requested to be added but already exists for this service. " +
+                                "If you intended to update an existing endpoint, send its actual id instead of null.");
+                    });
+        }
 
-        List<Endpoint> newEndpoints = endpoints.stream()
-                .map(req -> {
-                    Endpoint e = new Endpoint();
-                    e.setService(service);
-                    e.setHttpMethod(req.getHttpMethod());
-                    e.setEndpointPath(req.getPath());
-                    e.setResponseModel(responseModels.get(req.getHttpMethod() + ":" + req.getPath()));
-                    return e;
-                })
-                .toList();
-        endpointRepository.saveAll(newEndpoints);
+        Set<Long> idsToDelete = dbEndpointsById.keySet().stream()
+                .filter(id -> !requestIds.contains(id))
+                .collect(Collectors.toSet());
+        if (!idsToDelete.isEmpty()) {
+            mappingRepository.deleteByEndpoint_EndpointIdIn(new ArrayList<>(idsToDelete));
+            endpointRepository.deleteAllByIdInBatch(idsToDelete);
+        }
+
+        List<Endpoint> toSave = new ArrayList<>();
+        for (EndpointReplaceRequest req : endpoints) {
+            JsonNode responseModel = responseModels.get(req.getHttpMethod() + ":" + req.getPath());
+            if (req.getEndpointId() != null) {
+                Endpoint existing = dbEndpointsById.get(req.getEndpointId());
+                existing.setHttpMethod(req.getHttpMethod());
+                existing.setEndpointPath(req.getPath());
+                existing.setResponseModel(responseModel);
+                toSave.add(existing);
+            } else {
+                Endpoint newEndpoint = new Endpoint();
+                newEndpoint.setService(service);
+                newEndpoint.setHttpMethod(req.getHttpMethod());
+                newEndpoint.setEndpointPath(req.getPath());
+                newEndpoint.setResponseModel(responseModel);
+                toSave.add(newEndpoint);
+            }
+        }
+
+        toSave.stream()
+                .collect(Collectors.groupingBy(
+                        e -> e.getHttpMethod().name() + " " + e.getEndpointPath(),
+                        Collectors.counting()))
+                .entrySet().stream()
+                .filter(entry -> entry.getValue() > 1)
+                .findFirst()
+                .ifPresent(entry -> {
+                    String[] parts = entry.getKey().split(" ", 2);
+                    throw new ResponseStatusException(HttpStatus.CONFLICT,
+                            parts[0] + " endpoint '" + parts[1] + "' is requested to be added but already exists" +
+                            " for this service. If you intended to update an existing endpoint, send its actual id instead of null.");
+                });
+
+        endpointRepository.saveAll(toSave);
 
         return toServiceEndpointsResponse(serviceId);
     }
@@ -163,7 +217,7 @@ public class EndpointServiceImpl implements EndpointService {
         return EndpointResponse.builder()
                 .endpointId(endpoint.getEndpointId())
                 .httpMethod(endpoint.getHttpMethod())
-                .endpointPath(endpoint.getEndpointPath())
+                .path(endpoint.getEndpointPath())
                 .build();
     }
 
