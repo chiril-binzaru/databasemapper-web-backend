@@ -2,6 +2,7 @@ package com.databasemapper.service;
 
 import com.databasemapper.config.JdbcConnectionFactory;
 import com.databasemapper.dto.DbColumnResponse;
+import com.databasemapper.dto.ForeignKeyReferenceDto;
 import com.databasemapper.model.Connection;
 import com.databasemapper.model.Database;
 import com.databasemapper.model.enums.DatabaseType;
@@ -18,8 +19,11 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 @Service
@@ -106,6 +110,7 @@ public class DatabaseMetadataServiceImpl implements DatabaseMetadataService {
     }
 
     private List<DbColumnResponse> queryColumnsSql(java.sql.Connection conn, String schemaName, String tableName) throws SQLException {
+        Map<String, List<ForeignKeyReferenceDto>> foreignKeysByColumn = queryForeignKeysSql(conn, schemaName, tableName);
         String sql = """
                 SELECT c.column_name, c.data_type, c.is_nullable, c.ordinal_position, c.column_default,
                        CASE WHEN kcu.column_name IS NOT NULL THEN true ELSE false END AS is_primary_key
@@ -136,11 +141,58 @@ public class DatabaseMetadataServiceImpl implements DatabaseMetadataService {
                             .ordinalPosition(rs.getInt("ordinal_position"))
                             .columnDefault(rs.getString("column_default"))
                             .primaryKey(rs.getBoolean("is_primary_key"))
+                            .foreignKeys(foreignKeysByColumn.getOrDefault(rs.getString("column_name"), List.of()))
                             .build());
                 }
                 return result;
             }
         }
+    }
+
+    private Map<String, List<ForeignKeyReferenceDto>> queryForeignKeysSql(
+            java.sql.Connection conn,
+            String schemaName,
+            String tableName) throws SQLException {
+
+        String sql = """
+                SELECT
+                    kcu.column_name,
+                    tc.constraint_name,
+                    ccu.table_schema AS referenced_schema,
+                    ccu.table_name AS referenced_table,
+                    ccu.column_name AS referenced_column
+                FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu
+                  ON kcu.constraint_name = tc.constraint_name
+                 AND kcu.table_schema = tc.table_schema
+                 AND kcu.table_name = tc.table_name
+                JOIN information_schema.constraint_column_usage ccu
+                  ON ccu.constraint_name = tc.constraint_name
+                 AND ccu.table_schema = tc.table_schema
+                WHERE tc.constraint_type = 'FOREIGN KEY'
+                  AND tc.table_schema = ?
+                  AND tc.table_name = ?
+                ORDER BY kcu.ordinal_position
+                """;
+
+        Map<String, List<ForeignKeyReferenceDto>> result = new LinkedHashMap<>();
+        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setString(1, schemaName);
+            stmt.setString(2, tableName);
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    String columnName = rs.getString("column_name");
+                    result.computeIfAbsent(columnName, ignored -> new ArrayList<>())
+                            .add(ForeignKeyReferenceDto.builder()
+                                    .constraintName(rs.getString("constraint_name"))
+                                    .referencedSchema(rs.getString("referenced_schema"))
+                                    .referencedTable(rs.getString("referenced_table"))
+                                    .referencedColumn(rs.getString("referenced_column"))
+                                    .build());
+                }
+            }
+        }
+        return result;
     }
 
     // --- JDBC DatabaseMetaData-based queries (MySQL, Oracle) ---
@@ -182,6 +234,9 @@ public class DatabaseMetadataServiceImpl implements DatabaseMetadataService {
             while (pkRs.next()) pkColumns.add(pkRs.getString("COLUMN_NAME"));
         }
 
+        Map<String, List<ForeignKeyReferenceDto>> foreignKeysByColumn =
+                queryForeignKeysMeta(meta, catalog, schema, tableName);
+
         List<DbColumnResponse> result = new ArrayList<>();
         try (ResultSet rs = meta.getColumns(catalog, schema, tableName, "%")) {
             int position = 0;
@@ -194,10 +249,39 @@ public class DatabaseMetadataServiceImpl implements DatabaseMetadataService {
                         .ordinalPosition(++position)
                         .columnDefault(rs.getString("COLUMN_DEF"))
                         .primaryKey(pkColumns.contains(columnName))
+                        .foreignKeys(foreignKeysByColumn.getOrDefault(columnName, List.of()))
                         .build());
             }
         }
         return result;
+    }
+
+    private Map<String, List<ForeignKeyReferenceDto>> queryForeignKeysMeta(
+            DatabaseMetaData meta,
+            String catalog,
+            String schema,
+            String tableName) throws SQLException {
+
+        Map<String, List<ForeignKeyReferenceDto>> result = new HashMap<>();
+        try (ResultSet rs = meta.getImportedKeys(catalog, schema, tableName)) {
+            while (rs.next()) {
+                String fkColumn = rs.getString("FKCOLUMN_NAME");
+                result.computeIfAbsent(fkColumn, ignored -> new ArrayList<>())
+                        .add(ForeignKeyReferenceDto.builder()
+                                .constraintName(rs.getString("FK_NAME"))
+                                .referencedSchema(firstNonBlank(rs.getString("PKTABLE_SCHEM"), rs.getString("PKTABLE_CAT")))
+                                .referencedTable(rs.getString("PKTABLE_NAME"))
+                                .referencedColumn(rs.getString("PKCOLUMN_NAME"))
+                                .build());
+            }
+        }
+        return result;
+    }
+
+    private String firstNonBlank(String first, String second) {
+        if (first != null && !first.isBlank()) return first;
+        if (second != null && !second.isBlank()) return second;
+        return null;
     }
 
     // --- shared utility ---
