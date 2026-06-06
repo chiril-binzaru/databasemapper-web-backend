@@ -49,7 +49,7 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
             List<JoinConditionPairDto> additionalConditions
     ) {}
 
-    private record ResolvedChildJoin(String parentColumnPath, String childColumnPath) {}
+    private record ResolvedChildJoin(String parentColumnPath) {}
 
     @Override
     public JsonNode fetchData(String serviceName, String endpointPath, HttpMethod httpMethod, DataFetchRequest request) {
@@ -156,7 +156,7 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
                 result.putNull(modelField);
             } else {
                 ObjectNode nested = hydrateNode(
-                        f.getFieldMappings(), Map.of(cj.childColumnPath(), parentValue), conn, globalJoins);
+                        f.getFieldMappings(), Map.of(cj.parentColumnPath(), parentValue), conn, globalJoins);
                 result.set(modelField, nested != null ? nested : result.nullNode());
             }
         }
@@ -173,7 +173,7 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
             Object parentValue = row.get(ColumnPath.parse(cj.parentColumnPath()).columnAlias());
             result.set(modelField, parentValue == null
                     ? objectMapper.createArrayNode()
-                    : hydrateModelList(f, cj.childColumnPath(), parentValue, conn, globalJoins));
+                    : hydrateModelList(f, cj.parentColumnPath(), parentValue, conn, globalJoins));
         }
 
         // LIST_OF_VALUES fields
@@ -188,7 +188,7 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
             Object parentValue = row.get(ColumnPath.parse(cj.parentColumnPath()).columnAlias());
             result.set(modelField, parentValue == null
                     ? objectMapper.createArrayNode()
-                    : fetchValueList(f, cj.childColumnPath(), parentValue, conn));
+                    : fetchValueList(f, cj.parentColumnPath(), parentValue, conn, globalJoins));
         }
 
         return result;
@@ -196,7 +196,7 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
 
     private ArrayNode hydrateModelList(
             MappingFieldEntry listField,
-            String joinChildColumnPath,
+            String relationshipFilterColumnPath,
             Object parentJoinValue,
             java.sql.Connection conn,
             List<JoinEntryDto> globalJoins) throws SQLException {
@@ -209,7 +209,8 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
                 .findFirst();
 
         if (pkFieldOpt.isPresent()) {
-            return hydrateModelListByPk(listField, pkFieldOpt.get(), joinChildColumnPath, parentJoinValue, conn, globalJoins);
+            return hydrateModelListByPk(
+                    listField, pkFieldOpt.get(), relationshipFilterColumnPath, parentJoinValue, conn, globalJoins);
         }
 
         boolean hasNestedModelFields = listField.getFieldMappings().stream()
@@ -221,40 +222,30 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
                     + ". A primary key is required when list items contain nested MODEL or LIST_OF_MODELS fields.");
         }
 
-        return hydrateModelListByJoinColumn(listField, joinChildColumnPath, parentJoinValue, conn, globalJoins);
+        return hydrateModelListByRelationshipFilter(
+                listField, relationshipFilterColumnPath, parentJoinValue, conn, globalJoins);
     }
 
     private ArrayNode hydrateModelListByPk(
             MappingFieldEntry listField,
             MappingFieldEntry pkField,
-            String joinChildColumnPath,
+            String relationshipFilterColumnPath,
             Object parentJoinValue,
             java.sql.Connection conn,
             List<JoinEntryDto> globalJoins) throws SQLException {
 
         String pkColumnPath = pkField.getDatabaseInfo().getColumnPath();
-        ColumnPath pkCol = ColumnPath.parse(pkColumnPath);
-        ColumnPath joinChildCol = ColumnPath.parse(joinChildColumnPath);
-
-        if (!pkCol.tableKey().equals(joinChildCol.tableKey())) {
-            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "PK column and join condition column must be in the same table for LIST_OF_MODELS");
-        }
-
-        String sql = "SELECT DISTINCT " + pkCol.quotedFull()
-                + " FROM " + pkCol.quotedTableRef()
-                + " WHERE " + joinChildCol.quotedFull() + " = ?";
-
-        List<Object> pkValues = new ArrayList<>();
-        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
-            stmt.setObject(1, parentJoinValue);
-            try (ResultSet rs = stmt.executeQuery()) {
-                while (rs.next()) pkValues.add(rs.getObject(1));
-            }
-        }
+        List<Map<String, Object>> pkRows = executeNodeQueryAll(
+                Set.of(pkColumnPath),
+                Map.of(relationshipFilterColumnPath, parentJoinValue),
+                globalJoins,
+                conn);
 
         ArrayNode array = objectMapper.createArrayNode();
-        for (Object pkValue : pkValues) {
+        Set<Object> seenPkValues = new LinkedHashSet<>();
+        for (Map<String, Object> pkRow : pkRows) {
+            Object pkValue = pkRow.get(ColumnPath.parse(pkColumnPath).columnAlias());
+            if (pkValue == null || !seenPkValues.add(pkValue)) continue;
             ObjectNode childNode = hydrateNode(
                     listField.getFieldMappings(), Map.of(pkColumnPath, pkValue), conn, globalJoins);
             if (childNode != null) array.add(childNode);
@@ -262,15 +253,15 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
         return array;
     }
 
-    private ArrayNode hydrateModelListByJoinColumn(
+    private ArrayNode hydrateModelListByRelationshipFilter(
             MappingFieldEntry listField,
-            String joinChildColumnPath,
+            String relationshipFilterColumnPath,
             Object parentJoinValue,
             java.sql.Connection conn,
             List<JoinEntryDto> globalJoins) throws SQLException {
 
         Set<String> nodeTableKeys = new LinkedHashSet<>();
-        nodeTableKeys.add(ColumnPath.parse(joinChildColumnPath).tableKey());
+        nodeTableKeys.add(ColumnPath.parse(relationshipFilterColumnPath).tableKey());
 
         Set<String> columnPathsToSelect = new LinkedHashSet<>();
         listField.getFieldMappings().stream()
@@ -284,7 +275,7 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
         childJoins.values().forEach(cj -> columnPathsToSelect.add(cj.parentColumnPath()));
 
         List<Map<String, Object>> rows = executeNodeQueryAll(
-                columnPathsToSelect, Map.of(joinChildColumnPath, parentJoinValue), globalJoins, conn);
+                columnPathsToSelect, Map.of(relationshipFilterColumnPath, parentJoinValue), globalJoins, conn);
 
         ArrayNode array = objectMapper.createArrayNode();
         for (Map<String, Object> row : rows) {
@@ -312,7 +303,7 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
                 Object parentVal = row.get(ColumnPath.parse(cj.parentColumnPath()).columnAlias());
                 node.set(modelField, parentVal == null
                         ? objectMapper.createArrayNode()
-                        : fetchValueList(f, cj.childColumnPath(), parentVal, conn));
+                        : fetchValueList(f, cj.parentColumnPath(), parentVal, conn, globalJoins));
             }
 
             array.add(node);
@@ -322,29 +313,21 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
 
     private ArrayNode fetchValueList(
             MappingFieldEntry field,
-            String joinChildColumnPath,
+            String relationshipFilterColumnPath,
             Object parentJoinValue,
-            java.sql.Connection conn) throws SQLException {
+            java.sql.Connection conn,
+            List<JoinEntryDto> globalJoins) throws SQLException {
 
         String cp = columnPath(field);
-        ColumnPath valueCol = ColumnPath.parse(cp);
-        ColumnPath joinChildCol = ColumnPath.parse(joinChildColumnPath);
-
-        if (!valueCol.tableKey().equals(joinChildCol.tableKey())) {
-            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "LIST_OF_VALUES column and join condition column must be in the same table");
-        }
-
-        String sql = "SELECT " + valueCol.quotedFull()
-                + " FROM " + valueCol.quotedTableRef()
-                + " WHERE " + joinChildCol.quotedFull() + " = ?";
-
         ArrayNode array = objectMapper.createArrayNode();
-        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
-            stmt.setObject(1, parentJoinValue);
-            try (ResultSet rs = stmt.executeQuery()) {
-                while (rs.next()) addValue(array, rs.getObject(1));
-            }
+        List<Map<String, Object>> rows = executeNodeQueryAll(
+                Set.of(cp),
+                Map.of(relationshipFilterColumnPath, parentJoinValue),
+                globalJoins,
+                conn);
+        String valueAlias = ColumnPath.parse(cp).columnAlias();
+        for (Map<String, Object> row : rows) {
+            addValue(array, row.get(valueAlias));
         }
         return array;
     }
@@ -486,10 +469,7 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
             JoinEntryDto join = findParentChildJoin(nodeTableKeys, childTableKeys, globalJoins);
             if (join == null) continue;
 
-            result.put(f.getServiceInfo().getModelField(), new ResolvedChildJoin(
-                    parentSide(join, nodeTableKeys),
-                    childSide(join, nodeTableKeys)
-            ));
+            result.put(f.getServiceInfo().getModelField(), new ResolvedChildJoin(parentSide(join, nodeTableKeys)));
         }
         return result;
     }
@@ -511,6 +491,42 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
                 return join;
             }
         }
+
+        for (String parentTableKey : parentTableKeys) {
+            for (String childTableKey : childTableKeys) {
+                JoinEntryDto viaThirdTableJoin = findJoinViaThirdTable(parentTableKey, childTableKey, globalJoins);
+                if (viaThirdTableJoin != null) {
+                    return viaThirdTableJoin;
+                }
+            }
+        }
+        return null;
+    }
+
+    private JoinEntryDto findJoinViaThirdTable(
+            String parentTableKey,
+            String childTableKey,
+            List<JoinEntryDto> globalJoins) {
+
+        Set<String> parentAdjacentTables = adjacentTables(parentTableKey, globalJoins);
+        Set<String> childAdjacentTables = adjacentTables(childTableKey, globalJoins);
+
+        for (String bridgeTableKey : parentAdjacentTables) {
+            if (!childAdjacentTables.contains(bridgeTableKey)) continue;
+
+            for (JoinEntryDto join : globalJoins) {
+                ColumnPath left = ColumnPath.parse(join.getLeft());
+                ColumnPath right = ColumnPath.parse(join.getRight());
+                boolean matchesParentAndBridge =
+                        (left.tableKey().equals(parentTableKey) && right.tableKey().equals(bridgeTableKey))
+                        || (right.tableKey().equals(parentTableKey) && left.tableKey().equals(bridgeTableKey));
+
+                if (matchesParentAndBridge) {
+                    return join;
+                }
+            }
+        }
+
         return null;
     }
 
@@ -522,6 +538,20 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
     private String childSide(JoinEntryDto join, Set<String> parentTableKeys) {
         ColumnPath left = ColumnPath.parse(join.getLeft());
         return parentTableKeys.contains(left.tableKey()) ? join.getRight() : join.getLeft();
+    }
+
+    private Set<String> adjacentTables(String tableKey, List<JoinEntryDto> globalJoins) {
+        Set<String> neighbors = new LinkedHashSet<>();
+        for (JoinEntryDto join : globalJoins) {
+            ColumnPath left = ColumnPath.parse(join.getLeft());
+            ColumnPath right = ColumnPath.parse(join.getRight());
+            if (left.tableKey().equals(tableKey)) {
+                neighbors.add(right.tableKey());
+            } else if (right.tableKey().equals(tableKey)) {
+                neighbors.add(left.tableKey());
+            }
+        }
+        return neighbors;
     }
 
     // BFS from anchor to reach every referenced table via the global joins list
@@ -537,27 +567,27 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
         Set<String> remaining = new LinkedHashSet<>(allTableKeys);
         remaining.remove(anchorTableKey);
 
-        int maxPasses = remaining.size() + 1;
-        for (int pass = 0; pass < maxPasses && !remaining.isEmpty(); pass++) {
+        while (!remaining.isEmpty()) {
+            boolean progress = false;
+
             Iterator<String> it = remaining.iterator();
             while (it.hasNext()) {
                 String tableKey = it.next();
-                JoinEntryDto join = findDirectJoin(tableKey, inFrom, globalJoins);
-                if (join == null) continue;
+                List<JoinEntryDto> path = findJoinPath(tableKey, inFrom, globalJoins);
+                if (path == null) continue;
 
-                ColumnPath left = ColumnPath.parse(join.getLeft());
-                ColumnPath right = ColumnPath.parse(join.getRight());
-                boolean rightIsNew = right.tableKey().equals(tableKey);
+                for (JoinEntryDto join : path) {
+                    String newTableKey = addJoinStep(join, inFrom, steps);
+                    if (newTableKey != null) {
+                        inFrom.add(newTableKey);
+                    }
+                }
 
-                steps.add(new JoinStep(
-                        rightIsNew ? left.quotedFull() : right.quotedFull(),
-                        rightIsNew ? right.quotedFull() : left.quotedFull(),
-                        rightIsNew ? right.quotedTableRef() : left.quotedTableRef(),
-                        join.getAdditionalJoinConditions()
-                ));
-                inFrom.add(tableKey);
                 it.remove();
+                progress = true;
             }
+
+            if (!progress) break;
         }
 
         if (!remaining.isEmpty()) {
@@ -566,6 +596,69 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
                     + ". Add the required join conditions to the mapping.");
         }
         return steps;
+    }
+
+    private String addJoinStep(JoinEntryDto join, Set<String> knownTables, List<JoinStep> steps) {
+        ColumnPath left = ColumnPath.parse(join.getLeft());
+        ColumnPath right = ColumnPath.parse(join.getRight());
+        boolean leftKnown = knownTables.contains(left.tableKey());
+        boolean rightKnown = knownTables.contains(right.tableKey());
+
+        if (leftKnown == rightKnown) {
+            return null;
+        }
+
+        boolean rightIsNew = !rightKnown;
+        steps.add(new JoinStep(
+                rightIsNew ? left.quotedFull() : right.quotedFull(),
+                rightIsNew ? right.quotedFull() : left.quotedFull(),
+                rightIsNew ? right.quotedTableRef() : left.quotedTableRef(),
+                join.getAdditionalJoinConditions()
+        ));
+
+        return rightIsNew ? right.tableKey() : left.tableKey();
+    }
+
+    private List<JoinEntryDto> findJoinPath(
+            String targetTableKey,
+            Set<String> knownTables,
+            List<JoinEntryDto> globalJoins) {
+
+        record PathNode(String tableKey, List<JoinEntryDto> path) {}
+
+        Deque<PathNode> queue = new ArrayDeque<>();
+        Set<String> visited = new LinkedHashSet<>(knownTables);
+        for (String knownTable : knownTables) {
+            queue.addLast(new PathNode(knownTable, List.of()));
+        }
+
+        while (!queue.isEmpty()) {
+            PathNode current = queue.removeFirst();
+            if (current.tableKey().equals(targetTableKey)) {
+                return current.path();
+            }
+
+            for (JoinEntryDto join : globalJoins) {
+                ColumnPath left = ColumnPath.parse(join.getLeft());
+                ColumnPath right = ColumnPath.parse(join.getRight());
+
+                String nextTableKey = null;
+                if (left.tableKey().equals(current.tableKey()) && !visited.contains(right.tableKey())) {
+                    nextTableKey = right.tableKey();
+                } else if (right.tableKey().equals(current.tableKey()) && !visited.contains(left.tableKey())) {
+                    nextTableKey = left.tableKey();
+                }
+
+                if (nextTableKey != null) {
+                    visited.add(nextTableKey);
+                    List<JoinEntryDto> nextPath = new ArrayList<>(current.path());
+                    nextPath.add(join);
+                    queue.addLast(new PathNode(nextTableKey, nextPath));
+                }
+            }
+        }
+
+        return null;
     }
 
     private JoinEntryDto findDirectJoin(

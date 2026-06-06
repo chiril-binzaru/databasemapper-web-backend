@@ -3,6 +3,8 @@ package com.databasemapper.dto;
 import lombok.Builder;
 import lombok.Getter;
 
+import java.util.List;
+
 @Getter
 @Builder
 public class DbColumnResponse {
@@ -12,4 +14,5 @@ public class DbColumnResponse {
     private int ordinalPosition;
     private String columnDefault;
     private boolean primaryKey;
+    private List<ForeignKeyReferenceDto> foreignKeys;
 }
