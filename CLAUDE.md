@@ -61,13 +61,13 @@ databasemapper-web-backend/
 
 ## Database Schema
 
-Five tables, applied via Flyway migrations V1–V12.
+Five tables, applied via Flyway migrations V1–V14.
 
 ```
 databases    (database_id, database_type, database_host, database_name)
 services     (service_id, database_id, service_name, service_base_url, swagger_endpoint)
 connections  (connection_id, database_id, port, username, password, connection_string, connection_mode, is_active)
-endpoints    (endpoint_id, service_id, http_method, endpoint_path, response_model JSONB)
+endpoints    (endpoint_id, service_id, http_method, endpoint_path, response_model JSONB, is_list_response)
 mappings     (mapping_id, endpoint_id, mapping_data JSONB)
 ```
 
@@ -80,7 +80,8 @@ mappings     (mapping_id, endpoint_id, mapping_data JSONB)
 - `connections.connection_mode` — enum: `PARAMETERS` or `CONNECTION_STRING`; determines which fields are filled
 - `connections.username` and `connections.password` — nullable (not needed in CONNECTION_STRING mode)
 - `services.swagger_endpoint` — nullable; stores the path (e.g. `/v3/api-docs`); combined with `service_base_url` to fetch the OpenAPI spec
-- `endpoints.response_model` — JSONB; stores the committed response model snapshot (main model + nested models) anchored to the endpoint
+- `endpoints.response_model` — JSONB; stores the committed response model snapshot (main model + nested models) anchored to the endpoint; derived from the OpenAPI spec at sync time
+- `endpoints.is_list_response` — boolean; `true` when the OpenAPI response schema is `type: array` (i.e. the endpoint returns a list); populated at endpoint sync time, used by the hydration layer to return a JSON array vs a single object
 - `mappings.mapping_data` — JSONB; stores flexible mapping metadata (field↔column, primary keys, filter conditions, etc.)
 
 ### Flyway conventions
@@ -111,6 +112,32 @@ Port: `5432`
 - **Swagger/OpenAPI import** — fetch and parse OpenAPI spec from a service's swagger_endpoint
 - **Mapping export** — return mappings as compact metadata files
 - **Model hydration API** — return data from target DB as model objects (JSON)
+
+## Endpoint Sync API
+
+The sync response (`GET /api/v1/services/{serviceId}/endpoints/sync`) contains a top-level
+`syncStatus` and a list of `endpoints`, each with a per-item `status`.
+
+### Overall `syncStatus` values (`SyncStatus` enum)
+
+| Value | Condition |
+|-------|-----------|
+| `U`   | DB and Swagger are identical — nothing to do |
+| `A`   | DB is empty; all Swagger endpoints need to be added |
+| `AU`  | DB ⊊ Swagger; existing endpoints unchanged, new ones need to be added |
+| `AUR` | DB and Swagger overlap with unique entries on both sides; mix of unchanged, to-add, and to-remove |
+| `UR`  | Swagger ⊊ DB; some endpoints unchanged, extras need to be removed |
+| `R`   | Swagger has no endpoints; all DB endpoints need to be removed |
+
+### Per-item `status` values (`EndpointSyncStatus` enum)
+
+| Value | Meaning |
+|-------|---------|
+| `A`   | Endpoint exists in Swagger but not in DB — will be added |
+| `U`   | Endpoint exists in both DB and Swagger — unchanged |
+| `R`   | Endpoint exists in DB but not in Swagger — will be removed |
+
+Every item in the response always carries a status, regardless of the overall `syncStatus`.
 
 ## Development Conventions
 
