@@ -1,0 +1,1 @@
+ALTER TABLE endpoints ADD COLUMN is_list_response BOOLEAN NOT NULL DEFAULT FALSE;

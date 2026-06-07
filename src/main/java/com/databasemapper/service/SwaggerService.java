@@ -8,7 +8,9 @@ import java.util.Map;
 
 public interface SwaggerService {
 
+    record EndpointModelResult(JsonNode responseModel, boolean isList) {}
+
     List<SwaggerEndpointResponse> fetchSwaggerEndpoints(Long serviceId);
 
-    Map<String, JsonNode> fetchResponseModels(Long serviceId);
+    Map<String, EndpointModelResult> fetchResponseModels(Long serviceId);
 }

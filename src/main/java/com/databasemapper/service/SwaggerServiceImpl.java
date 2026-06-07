@@ -35,7 +35,7 @@ public class SwaggerServiceImpl implements SwaggerService {
     }
 
     @Override
-    public Map<String, JsonNode> fetchResponseModels(Long serviceId) {
+    public Map<String, EndpointModelResult> fetchResponseModels(Long serviceId) {
         com.databasemapper.model.Service service = serviceRepository.findById(serviceId)
                 .orElseThrow(() -> new EntityNotFoundException("Service not found with id: " + serviceId));
 
@@ -43,7 +43,7 @@ public class SwaggerServiceImpl implements SwaggerService {
         JsonNode paths = swagger.path("paths");
         JsonNode schemas = swagger.path("components").path("schemas");
 
-        Map<String, JsonNode> result = new HashMap<>();
+        Map<String, EndpointModelResult> result = new HashMap<>();
 
         paths.fieldNames().forEachRemaining(path -> {
             JsonNode pathItem = paths.get(path);
@@ -57,7 +57,7 @@ public class SwaggerServiceImpl implements SwaggerService {
                 JsonNode schema = resolveSuccessSchema(pathItem.get(method).path("responses"));
                 if (schema == null) return;
 
-                JsonNode model = extractModel(schema, schemas);
+                EndpointModelResult model = extractModel(schema, schemas);
                 if (model != null) {
                     result.put(method.toUpperCase() + ":" + path, model);
                 }
@@ -78,12 +78,14 @@ public class SwaggerServiceImpl implements SwaggerService {
         return null;
     }
 
-    private JsonNode extractModel(JsonNode schema, JsonNode schemas) {
+    private EndpointModelResult extractModel(JsonNode schema, JsonNode schemas) {
         if (schema.has("$ref")) {
-            return resolveRef(schema.get("$ref").asText(), schemas);
+            JsonNode model = resolveRef(schema.get("$ref").asText(), schemas);
+            return model != null ? new EndpointModelResult(model, false) : null;
         }
         if ("array".equals(schema.path("type").asText()) && schema.path("items").has("$ref")) {
-            return resolveRef(schema.path("items").get("$ref").asText(), schemas);
+            JsonNode model = resolveRef(schema.path("items").get("$ref").asText(), schemas);
+            return model != null ? new EndpointModelResult(model, true) : null;
         }
         return null;
     }
