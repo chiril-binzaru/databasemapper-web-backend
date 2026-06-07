@@ -67,52 +67,69 @@ public class EndpointServiceImpl implements EndpointService {
 
         if (swaggerKeys.equals(dbKeys)) {
             return EndpointSyncResponse.builder()
-                    .syncStatus(SyncStatus.UNCHANGED)
+                    .syncStatus(SyncStatus.U)
                     .build();
         }
 
-        if (dbEndpoints.isEmpty()) {
+        if (dbKeys.isEmpty()) {
             List<EndpointSyncItemResponse> items = swaggerEndpoints.stream()
                     .map(se -> EndpointSyncItemResponse.builder()
                             .httpMethod(se.getHttpMethod())
                             .path(se.getPath())
+                            .status(EndpointSyncStatus.A)
                             .build())
                     .toList();
-
             return EndpointSyncResponse.builder()
-                    .syncStatus(SyncStatus.TO_ADD_ALL)
+                    .syncStatus(SyncStatus.A)
                     .endpoints(items)
                     .build();
         }
 
-        // Conflict — build merged list: UNCHANGED + TO_REMOVE first, then TO_ADD
-        List<EndpointSyncItemResponse> items = new ArrayList<>();
+        if (swaggerKeys.isEmpty()) {
+            List<EndpointSyncItemResponse> items = dbEndpoints.stream()
+                    .map(e -> EndpointSyncItemResponse.builder()
+                            .httpMethod(e.getHttpMethod())
+                            .path(e.getEndpointPath())
+                            .status(EndpointSyncStatus.R)
+                            .build())
+                    .toList();
+            return EndpointSyncResponse.builder()
+                    .syncStatus(SyncStatus.R)
+                    .endpoints(items)
+                    .build();
+        }
 
+        boolean hasAdds = !swaggerKeys.stream().allMatch(dbKeys::contains);
+        boolean hasRemoves = !dbKeys.stream().allMatch(swaggerKeys::contains);
+
+        SyncStatus syncStatus = (hasAdds && hasRemoves) ? SyncStatus.AUR
+                : hasAdds ? SyncStatus.AU
+                : SyncStatus.UR;
+
+        List<EndpointSyncItemResponse> items = new ArrayList<>();
         for (Endpoint dbEndpoint : dbEndpoints) {
             String key = dbEndpoint.getHttpMethod() + ":" + dbEndpoint.getEndpointPath();
             EndpointSyncStatus status = swaggerKeys.contains(key)
-                    ? EndpointSyncStatus.UNCHANGED
-                    : EndpointSyncStatus.TO_REMOVE;
+                    ? EndpointSyncStatus.U
+                    : EndpointSyncStatus.R;
             items.add(EndpointSyncItemResponse.builder()
                     .httpMethod(dbEndpoint.getHttpMethod())
                     .path(dbEndpoint.getEndpointPath())
                     .status(status)
                     .build());
         }
-
         for (SwaggerEndpointResponse se : swaggerEndpoints) {
-            String key = se.getHttpMethod() + ":" + se.getPath();
-            if (!dbKeys.contains(key)) {
+            if (!dbKeys.contains(se.getHttpMethod() + ":" + se.getPath())) {
                 items.add(EndpointSyncItemResponse.builder()
                         .httpMethod(se.getHttpMethod())
                         .path(se.getPath())
-                        .status(EndpointSyncStatus.TO_ADD)
+                        .status(EndpointSyncStatus.A)
                         .build());
             }
         }
 
         return EndpointSyncResponse.builder()
-                .syncStatus(SyncStatus.CONFLICT)
+                .syncStatus(syncStatus)
                 .endpoints(items)
                 .build();
     }
