@@ -32,4 +32,7 @@ public class Endpoint {
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "response_model", columnDefinition = "jsonb")
     private JsonNode responseModel;
+
+    @Column(name = "is_list_response", nullable = false)
+    private boolean listResponse;
 }

@@ -84,6 +84,9 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
         List<JoinEntryDto> globalJoins = mapping.getJoins() != null ? mapping.getJoins() : List.of();
 
         try (java.sql.Connection conn = jdbcConnectionFactory.openConnection(database, connection)) {
+            if (endpoint.isListResponse() && columnFilters.isEmpty()) {
+                return hydrateRootList(mapping.getFieldMappings(), conn, globalJoins);
+            }
             ObjectNode result = hydrateNode(mapping.getFieldMappings(), columnFilters, conn, globalJoins);
             if (result == null) {
                 throw new EntityNotFoundException("No data found matching the provided filters");
@@ -192,6 +195,65 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
         }
 
         return result;
+    }
+
+    private ArrayNode hydrateRootList(
+            List<MappingFieldEntry> fieldMappings,
+            java.sql.Connection conn,
+            List<JoinEntryDto> globalJoins) throws SQLException {
+
+        Optional<MappingFieldEntry> pkFieldOpt = fieldMappings.stream()
+                .filter(f -> f.getKind() == FieldKind.VALUE
+                        && f.getDatabaseInfo() != null
+                        && Boolean.TRUE.equals(f.getDatabaseInfo().getPrimaryKey())
+                        && f.getDatabaseInfo().getColumnPath() != null)
+                .findFirst();
+
+        if (pkFieldOpt.isPresent()) {
+            String pkColumnPath = pkFieldOpt.get().getDatabaseInfo().getColumnPath();
+            List<Map<String, Object>> pkRows = executeNodeQueryAll(
+                    Set.of(pkColumnPath), Map.of(), globalJoins, conn);
+
+            ArrayNode array = objectMapper.createArrayNode();
+            Set<Object> seenPkValues = new LinkedHashSet<>();
+            for (Map<String, Object> pkRow : pkRows) {
+                Object pkValue = pkRow.get(ColumnPath.parse(pkColumnPath).columnAlias());
+                if (pkValue == null || !seenPkValues.add(pkValue)) continue;
+                ObjectNode node = hydrateNode(fieldMappings, Map.of(pkColumnPath, pkValue), conn, globalJoins);
+                if (node != null) array.add(node);
+            }
+            return array;
+        }
+
+        boolean hasNestedModelFields = fieldMappings.stream()
+                .anyMatch(f -> f.getKind() == FieldKind.MODEL || f.getKind() == FieldKind.LIST_OF_MODELS);
+        if (hasNestedModelFields) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "No primary key defined on root mapping. A primary key is required when items contain nested MODEL or LIST_OF_MODELS fields.");
+        }
+
+        Set<String> columnPathsToSelect = fieldMappings.stream()
+                .filter(f -> f.getKind() == FieldKind.VALUE && columnPath(f) != null)
+                .map(this::columnPath)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        List<Map<String, Object>> rows = executeNodeQueryAll(columnPathsToSelect, Map.of(), globalJoins, conn);
+        ArrayNode array = objectMapper.createArrayNode();
+        for (Map<String, Object> row : rows) {
+            ObjectNode node = objectMapper.createObjectNode();
+            for (MappingFieldEntry f : fieldMappings) {
+                if (f.getKind() != FieldKind.VALUE) continue;
+                String modelField = f.getServiceInfo().getModelField();
+                String cp = columnPath(f);
+                if (cp == null) {
+                    node.putNull(modelField);
+                } else {
+                    putValue(node, modelField, row.get(ColumnPath.parse(cp).columnAlias()));
+                }
+            }
+            array.add(node);
+        }
+        return array;
     }
 
     private ArrayNode hydrateModelList(
@@ -343,16 +405,16 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
             Map<String, Object> whereConditions,
             List<JoinEntryDto> globalJoins) {
 
-        if (whereConditions.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "At least one filter condition is required");
-        }
-
         List<ColumnPath> selectCols = columnPathsToSelect.stream().map(ColumnPath::parse).toList();
         List<ColumnPath> whereCols = whereConditions.keySet().stream().map(ColumnPath::parse).toList();
 
-        ColumnPath anchorWherePath = whereCols.get(0);
-        String anchorTableKey = anchorWherePath.tableKey();
+        if (whereCols.isEmpty() && selectCols.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Cannot build query: no columns to select or filter on");
+        }
+
+        ColumnPath anchorPath = whereCols.isEmpty() ? selectCols.getFirst() : whereCols.getFirst();
+        String anchorTableKey = anchorPath.tableKey();
 
         Set<String> allTableKeys = new LinkedHashSet<>();
         allTableKeys.add(anchorTableKey);
@@ -370,7 +432,7 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
                     .collect(Collectors.joining(", ")));
         }
 
-        sql.append(" FROM ").append(anchorWherePath.quotedTableRef());
+        sql.append(" FROM ").append(anchorPath.quotedTableRef());
 
         // Params collected in SQL order: JOIN condition literals first, then WHERE values
         List<Object> params = new ArrayList<>();
@@ -390,7 +452,9 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
             whereParts.add(ColumnPath.parse(entry.getKey()).quotedFull() + " = ?");
             params.add(entry.getValue());
         }
-        sql.append(" WHERE ").append(String.join(" AND ", whereParts));
+        if (!whereParts.isEmpty()) {
+            sql.append(" WHERE ").append(String.join(" AND ", whereParts));
+        }
 
         return new BuiltQuery(sql.toString(), params);
     }

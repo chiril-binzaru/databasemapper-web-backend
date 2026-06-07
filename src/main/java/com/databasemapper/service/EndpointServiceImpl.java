@@ -122,7 +122,7 @@ public class EndpointServiceImpl implements EndpointService {
     public ServiceEndpointsResponse replaceEndpoints(Long serviceId, List<EndpointReplaceRequest> endpoints) {
         Service service = requireService(serviceId);
 
-        Map<String, JsonNode> responseModels = swaggerService.fetchResponseModels(serviceId);
+        Map<String, SwaggerService.EndpointModelResult> responseModels = swaggerService.fetchResponseModels(serviceId);
 
         Map<Long, Endpoint> dbEndpointsById = endpointRepository
                 .findAllByService_ServiceIdOrderByEndpointPathAscHttpMethodAsc(serviceId)
@@ -166,12 +166,15 @@ public class EndpointServiceImpl implements EndpointService {
 
         List<Endpoint> toSave = new ArrayList<>();
         for (EndpointReplaceRequest req : endpoints) {
-            JsonNode responseModel = responseModels.get(req.getHttpMethod() + ":" + req.getPath());
+            SwaggerService.EndpointModelResult modelResult = responseModels.get(req.getHttpMethod() + ":" + req.getPath());
+            JsonNode responseModel = modelResult != null ? modelResult.responseModel() : null;
+            boolean isList = modelResult != null && modelResult.isList();
             if (req.getEndpointId() != null) {
                 Endpoint existing = dbEndpointsById.get(req.getEndpointId());
                 existing.setHttpMethod(req.getHttpMethod());
                 existing.setEndpointPath(req.getPath());
                 existing.setResponseModel(responseModel);
+                existing.setListResponse(isList);
                 toSave.add(existing);
             } else {
                 Endpoint newEndpoint = new Endpoint();
@@ -179,6 +182,7 @@ public class EndpointServiceImpl implements EndpointService {
                 newEndpoint.setHttpMethod(req.getHttpMethod());
                 newEndpoint.setEndpointPath(req.getPath());
                 newEndpoint.setResponseModel(responseModel);
+                newEndpoint.setListResponse(isList);
                 toSave.add(newEndpoint);
             }
         }
