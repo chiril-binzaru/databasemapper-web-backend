@@ -4,6 +4,7 @@ import com.databasemapper.dto.EndpointSyncResponse;
 import com.databasemapper.dto.SwaggerEndpointResponse;
 import com.databasemapper.model.HttpMethod;
 import com.databasemapper.model.Service;
+import com.databasemapper.model.enums.EndpointSyncStatus;
 import com.databasemapper.model.enums.SyncStatus;
 import com.databasemapper.repository.EndpointRepository;
 import com.databasemapper.repository.MappingRepository;
@@ -66,15 +67,15 @@ class EndpointServiceImplTest {
 
         EndpointSyncResponse response = endpointService.syncEndpoints(serviceId);
 
-        assertEquals(SyncStatus.TO_ADD_ALL, response.getSyncStatus());
+        assertEquals(SyncStatus.A, response.getSyncStatus());
         assertNotNull(response.getEndpoints());
         assertEquals(2, response.getEndpoints().size());
         assertEquals(HttpMethod.GET, response.getEndpoints().get(0).getHttpMethod());
         assertEquals("/users", response.getEndpoints().get(0).getPath());
-        assertNull(response.getEndpoints().get(0).getStatus());
+        assertEquals(EndpointSyncStatus.A, response.getEndpoints().get(0).getStatus());
         assertEquals(HttpMethod.POST, response.getEndpoints().get(1).getHttpMethod());
         assertEquals("/users", response.getEndpoints().get(1).getPath());
-        assertNull(response.getEndpoints().get(1).getStatus());
+        assertEquals(EndpointSyncStatus.A, response.getEndpoints().get(1).getStatus());
         verify(endpointRepository, never()).saveAll(org.mockito.ArgumentMatchers.<List<com.databasemapper.model.Endpoint>>any());
     }
 
@@ -100,7 +101,7 @@ class EndpointServiceImplTest {
 
         EndpointSyncResponse response = endpointService.syncEndpoints(serviceId);
 
-        assertEquals(SyncStatus.UNCHANGED, response.getSyncStatus());
+        assertEquals(SyncStatus.U, response.getSyncStatus());
         assertNull(response.getEndpoints());
     }
 }
