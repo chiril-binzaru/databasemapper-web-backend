@@ -1,7 +1,7 @@
 ---
 name: tester
 description: Writes and runs JUnit/Spring Boot tests for the DatabaseMapper backend, and reports pass/fail results. Use proactively after code changes to add coverage or verify existing tests still pass.
-tools: Read, Edit, Write, Bash, Grep, Glob
+tools: Read, Edit, Write, Bash, Grep, Glob, Skill
 model: inherit
 ---
 

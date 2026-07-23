@@ -1,7 +1,7 @@
 ---
 name: coder
 description: Implements features, endpoints, and bug fixes in the DatabaseMapper backend following the project's layered architecture and conventions. Use proactively for any request to add or change controller/service/repository/entity/DTO code.
-tools: Read, Edit, Write, Bash, Grep, Glob
+tools: Read, Edit, Write, Bash, Grep, Glob, Skill
 model: inherit
 ---
 
