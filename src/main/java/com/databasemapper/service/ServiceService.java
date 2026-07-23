@@ -9,6 +9,8 @@ public interface ServiceService {
 
     List<ServiceResponse> create(ServiceRequest request);
 
+    ServiceResponse update(Long serviceId, ServiceRequest request);
+
     List<ServiceResponse> getAll();
 
     void delete(Long serviceId);
