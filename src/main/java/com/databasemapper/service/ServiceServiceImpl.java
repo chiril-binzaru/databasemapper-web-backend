@@ -43,6 +43,29 @@ public class ServiceServiceImpl implements ServiceService {
     }
 
     @Override
+    public ServiceResponse update(Long serviceId, ServiceRequest request) {
+        com.databasemapper.model.Service service = serviceRepository.findById(serviceId)
+                .orElseThrow(() -> new EntityNotFoundException("Service not found with id: " + serviceId));
+
+        service.setServiceName(request.getServiceName());
+        service.setServiceBaseUrl(request.getServiceBaseUrl());
+        service.setSwaggerEndpoint(request.getSwaggerEndpoint());
+
+        if (request.getDatabaseId() != null) {
+            Database database = databaseRepository.findById(request.getDatabaseId())
+                    .orElseThrow(() -> new EntityNotFoundException(
+                            "Database not found with id: " + request.getDatabaseId()));
+            service.setDatabase(database);
+        } else {
+            service.setDatabase(null);
+        }
+
+        serviceRepository.save(service);
+
+        return toResponse(service);
+    }
+
+    @Override
     public List<ServiceResponse> getAll() {
         return serviceRepository.findAllByOrderByServiceNameAsc().stream()
                 .map(this::toResponse)

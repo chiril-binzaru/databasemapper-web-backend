@@ -50,6 +50,23 @@ public class ServiceController {
         return ResponseEntity.status(HttpStatus.CREATED).body(serviceService.create(request));
     }
 
+    @Operation(summary = "Update an existing service")
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "Service updated"),
+        @ApiResponse(responseCode = "400", description = "Invalid request body",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "404", description = "Service not found, or database not found for the provided databaseId",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "500", description = "Unexpected error",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
+    @PutMapping("/{serviceId}")
+    public ResponseEntity<ServiceResponse> update(
+            @PathVariable Long serviceId,
+            @Valid @RequestBody ServiceRequest request) {
+        return ResponseEntity.ok(serviceService.update(serviceId, request));
+    }
+
     @Operation(summary = "Delete a service by ID")
     @ApiResponses({
         @ApiResponse(responseCode = "204", description = "Service deleted"),
