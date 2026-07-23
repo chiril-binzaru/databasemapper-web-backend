@@ -1,7 +1,7 @@
 ---
 name: issue-debugger
 description: Investigates bugs, failing tests, stack traces, or unexpected API behavior in the DatabaseMapper backend and reports the root cause. Use proactively when a test fails, an endpoint misbehaves, or the user reports a bug, before any fix is attempted.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, Skill
 model: inherit
 ---
 

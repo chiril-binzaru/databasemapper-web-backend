@@ -1,7 +1,7 @@
 ---
 name: code-reviewer
 description: Reviews a diff or recent changes in the DatabaseMapper backend for correctness bugs and violations of the project's layering, naming, and REST conventions. Use proactively after coder or tester subagents finish a change, before it's considered done.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, Skill
 model: inherit
 ---
 
