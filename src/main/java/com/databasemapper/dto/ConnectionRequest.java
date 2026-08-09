@@ -23,6 +23,6 @@ public class ConnectionRequest {
     @Size(max = 255)
     private String password;
 
-    @Size(max = 255)
+    @Size(max = 4096)
     private String connectionString;
 }
