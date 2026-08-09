@@ -20,7 +20,7 @@ public class Connection {
     @JoinColumn(name = "database_id", nullable = false)
     private Database database;
 
-    @Column(name = "port", nullable = false)
+    @Column(name = "port")
     private Integer port;
 
     @Column(name = "username")
