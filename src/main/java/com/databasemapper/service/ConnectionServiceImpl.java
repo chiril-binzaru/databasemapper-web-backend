@@ -17,10 +17,15 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.sql.SQLException;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Service
 @RequiredArgsConstructor
 public class ConnectionServiceImpl implements ConnectionService {
+
+    private static final Pattern JDBC_URL_SCHEME =
+            Pattern.compile("^(jdbc:[A-Za-z0-9_+-]+:)", Pattern.CASE_INSENSITIVE);
 
     private final ConnectionRepository connectionRepository;
     private final DatabaseRepository databaseRepository;
@@ -40,6 +45,7 @@ public class ConnectionServiceImpl implements ConnectionService {
     @Override
     public ConnectionResponse create(Long databaseId, ConnectionRequest request) {
         Database database = requireDatabase(databaseId);
+        requireConnectionStringMatchesVendor(database, request);
 
         Connection connection = new Connection();
         connection.setDatabase(database);
@@ -54,7 +60,8 @@ public class ConnectionServiceImpl implements ConnectionService {
 
     @Override
     public ConnectionResponse update(Long databaseId, Long connectionId, ConnectionRequest request) {
-        requireDatabase(databaseId);
+        Database database = requireDatabase(databaseId);
+        requireConnectionStringMatchesVendor(database, request);
 
         Connection connection = requireConnection(connectionId, databaseId);
 
@@ -68,8 +75,8 @@ public class ConnectionServiceImpl implements ConnectionService {
         } else {
             connection.setConnectionString(request.getConnectionString());
             connection.setPort(null);
-            connection.setUsername(null);
-            connection.setPassword(null);
+            connection.setUsername(request.getUsername());
+            connection.setPassword(request.getPassword());
         }
 
         return toResponse(connectionRepository.save(connection));
@@ -98,6 +105,7 @@ public class ConnectionServiceImpl implements ConnectionService {
     @Override
     public void testConnectionFromRequest(Long databaseId, ConnectionRequest request) {
         Database database = requireDatabase(databaseId);
+        requireConnectionStringMatchesVendor(database, request);
 
         Connection connection = new Connection();
         connection.setConnectionMode(request.getConnectionMode());
@@ -122,6 +130,40 @@ public class ConnectionServiceImpl implements ConnectionService {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "Could not connect to database: " + e.getMessage());
         }
+    }
+
+    /**
+     * A connection string pasted for the wrong vendor still connects, because the driver is chosen by
+     * the URL rather than by the stored database type. The mismatch only surfaces later, when metadata
+     * queries written for the declared vendor run against the server the URL actually reached, so it
+     * is rejected here instead.
+     */
+    private void requireConnectionStringMatchesVendor(Database database, ConnectionRequest request) {
+        if (request.getConnectionMode() != ConnectionMode.CONNECTION_STRING) {
+            return;
+        }
+
+        String connectionString = request.getConnectionString();
+        if (connectionString == null || connectionString.isBlank()) {
+            return;
+        }
+
+        String expectedPrefix = jdbcConnectionFactory.expectedUrlPrefix(database.getDatabaseType());
+        if (!connectionString.regionMatches(true, 0, expectedPrefix, 0, expectedPrefix.length())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Connection string for a %s database must start with %s but starts with %s"
+                            .formatted(database.getDatabaseType(), expectedPrefix, urlSchemeOf(connectionString)));
+        }
+    }
+
+    /**
+     * The leading {@code jdbc:vendor:} scheme only. Anything else is reported generically rather than
+     * echoed, because a string that does not start with a recognisable scheme can still carry a host
+     * or credentials before its first colons.
+     */
+    private String urlSchemeOf(String connectionString) {
+        Matcher matcher = JDBC_URL_SCHEME.matcher(connectionString);
+        return matcher.find() ? matcher.group(1) : "an unrecognised scheme";
     }
 
     private Database requireDatabase(Long databaseId) {

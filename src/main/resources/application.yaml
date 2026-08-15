@@ -11,6 +11,15 @@ spring:
     show-sql: true
     open-in-view: false
 
+databasemapper:
+  jdbc:
+    sqlserver:
+      # Applies to target SQL Server connections built from host/port parameters, not to this app's
+      # own datasource. Left off by default because target servers in development rarely have TLS
+      # configured; turn it on per environment.
+      encrypt: false
+      trust-server-certificate: true
+
 logging:
   file:
     name: logs/app.log
