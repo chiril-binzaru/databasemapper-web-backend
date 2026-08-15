@@ -103,8 +103,9 @@ public class DatabaseMetadataServiceImpl implements DatabaseMetadataService {
     private AbstractDatabaseMetadataProvider requireProvider(DatabaseType databaseType) {
         AbstractDatabaseMetadataProvider provider = providers.get(databaseType);
         if (provider == null) {
-            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "No metadata provider registered for database type: " + databaseType);
+            // Unreachable: the constructor rejects a registry that is missing any DatabaseType. Kept so
+            // that relaxing that guard surfaces as a named failure rather than a NullPointerException.
+            throw new IllegalStateException("No metadata provider registered for database type: " + databaseType);
         }
         return provider;
     }
