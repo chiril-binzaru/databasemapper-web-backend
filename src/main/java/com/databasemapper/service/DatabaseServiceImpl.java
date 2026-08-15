@@ -23,17 +23,7 @@ public class DatabaseServiceImpl implements DatabaseService {
     @Override
     @Transactional(readOnly = true)
     public DatabaseResponse getByServiceId(Long serviceId) {
-        com.databasemapper.model.Service service = serviceRepository.findById(serviceId)
-                .orElseThrow(() -> new EntityNotFoundException("Service not found with id: " + serviceId));
-
-        Database database = service.getDatabase();
-        if (database == null) {
-            throw new ResponseStatusException(
-                    NOT_FOUND,
-                    "Service " + serviceId + " has no database assigned");
-        }
-
-        return toResponse(database);
+        return toResponse(requireAssignedDatabase(serviceId));
     }
 
     @Override
@@ -58,6 +48,32 @@ public class DatabaseServiceImpl implements DatabaseService {
         serviceRepository.save(service);
 
         return toResponse(saved);
+    }
+
+    @Override
+    @Transactional
+    public DatabaseResponse update(Long serviceId, DatabaseRequest request) {
+        Database database = requireAssignedDatabase(serviceId);
+
+        database.setDatabaseType(request.getDatabaseType());
+        database.setDatabaseHost(request.getDatabaseHost());
+        database.setDatabaseName(request.getDatabaseName());
+
+        return toResponse(databaseRepository.save(database));
+    }
+
+    private Database requireAssignedDatabase(Long serviceId) {
+        com.databasemapper.model.Service service = serviceRepository.findById(serviceId)
+                .orElseThrow(() -> new EntityNotFoundException("Service not found with id: " + serviceId));
+
+        Database database = service.getDatabase();
+        if (database == null) {
+            throw new ResponseStatusException(
+                    NOT_FOUND,
+                    "Service " + serviceId + " has no database assigned");
+        }
+
+        return database;
     }
 
     private DatabaseResponse toResponse(Database database) {

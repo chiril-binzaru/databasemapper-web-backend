@@ -54,4 +54,21 @@ public class ServiceDatabaseController {
         DatabaseResponse response = databaseService.create(serviceId, request);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
+
+    @Operation(summary = "Update the database assigned to a service")
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "Database updated"),
+        @ApiResponse(responseCode = "400", description = "Invalid request body",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "404", description = "Service not found or no database assigned",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "500", description = "Unexpected error",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
+    @PutMapping
+    public ResponseEntity<DatabaseResponse> update(
+            @PathVariable Long serviceId,
+            @Valid @RequestBody DatabaseRequest request) {
+        return ResponseEntity.ok(databaseService.update(serviceId, request));
+    }
 }
