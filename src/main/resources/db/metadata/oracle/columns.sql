@@ -19,4 +19,5 @@ SELECT c.column_name                                                AS column_na
 FROM all_tab_columns c
 WHERE c.owner = ?
   AND c.table_name = ?
+  AND c.column_id IS NOT NULL
 ORDER BY c.column_id

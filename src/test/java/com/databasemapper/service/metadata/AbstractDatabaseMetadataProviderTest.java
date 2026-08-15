@@ -144,6 +144,100 @@ class AbstractDatabaseMetadataProviderTest {
         verify(stmt).setObject(1, "public");
     }
 
+    @Test
+    void placeholderCountIgnoresQuestionMarksInMultiLineBlockComments() {
+        TestProvider testProvider = new TestProvider();
+        String sql = """
+                /* params: 1 = schema name.
+                   Is this a placeholder? No.
+                   Neither is this ? one. */
+                SELECT 1 AS one
+                FROM t
+                WHERE name = ?
+                """;
+        AbstractDatabaseMetadataProvider.MetadataQuery query =
+                new AbstractDatabaseMetadataProvider.MetadataQuery("test/block-comment.sql", sql);
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> testProvider.runQueryStrings(conn, query));
+
+        assertTrue(ex.getMessage().contains("declares 1 parameter placeholder(s) but 0 argument(s) were bound"),
+                "only the real placeholder should be counted but message was: " + ex.getMessage());
+    }
+
+    @Test
+    void placeholderCountIgnoresQuestionMarksInABlockCommentContainingAQuote() {
+        TestProvider testProvider = new TestProvider();
+        String sql = """
+                /* It's ? a comment, and the apostrophe above must not open a literal.
+                   Nor should this ? count. */
+                SELECT 1 AS one
+                FROM t
+                WHERE name = ?
+                  AND owner = ?
+                """;
+        AbstractDatabaseMetadataProvider.MetadataQuery query =
+                new AbstractDatabaseMetadataProvider.MetadataQuery("test/block-comment-quote.sql", sql);
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> testProvider.runQueryStrings(conn, query));
+
+        assertTrue(ex.getMessage().contains("declares 2 parameter placeholder(s) but 0 argument(s) were bound"),
+                "only the two real placeholders should be counted but message was: " + ex.getMessage());
+    }
+
+    @Test
+    void placeholderCountIgnoresQuestionMarksInAnInlineBlockCommentAndResumesCountingAfterIt() {
+        TestProvider testProvider = new TestProvider();
+        String sql = "SELECT 1 FROM t WHERE a = ? /* not a placeholder: ? */ AND b = ?";
+        AbstractDatabaseMetadataProvider.MetadataQuery query =
+                new AbstractDatabaseMetadataProvider.MetadataQuery("test/inline-block-comment.sql", sql);
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> testProvider.runQueryStrings(conn, query));
+
+        assertTrue(ex.getMessage().contains("declares 2 parameter placeholder(s) but 0 argument(s) were bound"),
+                "counting should resume after the block comment but message was: " + ex.getMessage());
+    }
+
+    @Test
+    void placeholderCountTreatsABlockCommentOpenerInsideALiteralAsText() {
+        TestProvider testProvider = new TestProvider();
+        String sql = "SELECT '/* ? not a comment' AS literal FROM t WHERE a = ?";
+        AbstractDatabaseMetadataProvider.MetadataQuery query =
+                new AbstractDatabaseMetadataProvider.MetadataQuery("test/block-comment-in-literal.sql", sql);
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> testProvider.runQueryStrings(conn, query));
+
+        assertTrue(ex.getMessage().contains("declares 1 parameter placeholder(s) but 0 argument(s) were bound"),
+                "only the real placeholder should be counted but message was: " + ex.getMessage());
+    }
+
+    @Test
+    void placeholderCountAcceptsTheRealPlaceholdersInBlockCommentHeavySql() throws SQLException {
+        TestProvider testProvider = new TestProvider();
+        String sql = """
+                /* params: 1 = schema name, 2 = table name.
+                   Is this a placeholder? No. It's ? not one. */
+                SELECT 1 AS one
+                FROM t
+                WHERE schema_name = ? -- still not a ? here
+                  AND table_name = ?
+                """;
+        AbstractDatabaseMetadataProvider.MetadataQuery query =
+                new AbstractDatabaseMetadataProvider.MetadataQuery("test/block-comment-ok.sql", sql);
+        when(conn.prepareStatement(sql)).thenReturn(stmt);
+        when(stmt.executeQuery()).thenReturn(rs);
+        when(rs.next()).thenReturn(false);
+
+        List<String> result = testProvider.runQueryStrings(conn, query, "public", "orders");
+
+        assertEquals(List.of(), result);
+        verify(stmt).setObject(1, "public");
+        verify(stmt).setObject(2, "orders");
+    }
+
     // --- C. Execution and mapping ---------------------------------------------------------------
 
     @Test

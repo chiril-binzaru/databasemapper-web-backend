@@ -135,16 +135,25 @@ public abstract class AbstractDatabaseMetadataProvider {
         int count = 0;
         boolean inLiteral = false;
         boolean inLineComment = false;
+        boolean inBlockComment = false;
         for (int i = 0; i < sql.length(); i++) {
             char c = sql.charAt(i);
             if (inLineComment) {
                 if (c == '\n') inLineComment = false;
+            } else if (inBlockComment) {
+                if (c == '*' && i + 1 < sql.length() && sql.charAt(i + 1) == '/') {
+                    inBlockComment = false;
+                    i++;
+                }
             } else if (inLiteral) {
                 if (c == '\'') inLiteral = false;
             } else if (c == '\'') {
                 inLiteral = true;
             } else if (c == '-' && i + 1 < sql.length() && sql.charAt(i + 1) == '-') {
                 inLineComment = true;
+            } else if (c == '/' && i + 1 < sql.length() && sql.charAt(i + 1) == '*') {
+                inBlockComment = true;
+                i++;
             } else if (c == '?') {
                 count++;
             }
