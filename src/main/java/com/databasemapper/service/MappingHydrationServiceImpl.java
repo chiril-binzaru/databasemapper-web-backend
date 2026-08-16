@@ -14,6 +14,7 @@ import com.databasemapper.repository.ConnectionRepository;
 import com.databasemapper.repository.EndpointRepository;
 import com.databasemapper.repository.MappingRepository;
 import com.databasemapper.util.ColumnPath;
+import com.databasemapper.util.IdentifierQuoter;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -403,7 +404,8 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
     private BuiltQuery buildNodeQuery(
             Set<String> columnPathsToSelect,
             Map<String, Object> whereConditions,
-            List<JoinEntryDto> globalJoins) {
+            List<JoinEntryDto> globalJoins,
+            IdentifierQuoter quoter) {
 
         List<ColumnPath> selectCols = columnPathsToSelect.stream().map(ColumnPath::parse).toList();
         List<ColumnPath> whereCols = whereConditions.keySet().stream().map(ColumnPath::parse).toList();
@@ -421,18 +423,18 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
         selectCols.forEach(c -> allTableKeys.add(c.tableKey()));
         whereCols.forEach(c -> allTableKeys.add(c.tableKey()));
 
-        List<JoinStep> joinSteps = resolveJoinOrder(anchorTableKey, allTableKeys, globalJoins);
+        List<JoinStep> joinSteps = resolveJoinOrder(anchorTableKey, allTableKeys, globalJoins, quoter);
 
         StringBuilder sql = new StringBuilder("SELECT ");
         if (selectCols.isEmpty()) {
             sql.append("1");
         } else {
             sql.append(selectCols.stream()
-                    .map(c -> c.quotedFull() + " AS \"" + c.columnAlias() + "\"")
+                    .map(c -> c.quotedFull(quoter) + " AS " + quoter.quote(c.columnAlias()))
                     .collect(Collectors.joining(", ")));
         }
 
-        sql.append(" FROM ").append(anchorPath.quotedTableRef());
+        sql.append(" FROM ").append(anchorPath.quotedTableRef(quoter));
 
         // Params collected in SQL order: JOIN condition literals first, then WHERE values
         List<Object> params = new ArrayList<>();
@@ -442,14 +444,14 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
                .append(" ON ").append(step.knownSideQuoted()).append(" = ").append(step.newSideQuoted());
             if (step.additionalConditions() != null) {
                 for (JoinConditionPairDto addCond : step.additionalConditions()) {
-                    appendAdditionalCondition(sql, params, addCond);
+                    appendAdditionalCondition(sql, params, addCond, quoter);
                 }
             }
         }
 
         List<String> whereParts = new ArrayList<>();
         for (Map.Entry<String, Object> entry : whereConditions.entrySet()) {
-            whereParts.add(ColumnPath.parse(entry.getKey()).quotedFull() + " = ?");
+            whereParts.add(ColumnPath.parse(entry.getKey()).quotedFull(quoter) + " = ?");
             params.add(entry.getValue());
         }
         if (!whereParts.isEmpty()) {
@@ -465,7 +467,8 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
             List<JoinEntryDto> globalJoins,
             java.sql.Connection conn) throws SQLException {
 
-        BuiltQuery q = buildNodeQuery(columnPathsToSelect, whereConditions, globalJoins);
+        BuiltQuery q = buildNodeQuery(columnPathsToSelect, whereConditions, globalJoins,
+                IdentifierQuoter.forConnection(conn));
         try (PreparedStatement stmt = conn.prepareStatement(q.sql())) {
             for (int i = 0; i < q.params().size(); i++) {
                 stmt.setObject(i + 1, q.params().get(i));
@@ -488,7 +491,8 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
             List<JoinEntryDto> globalJoins,
             java.sql.Connection conn) throws SQLException {
 
-        BuiltQuery q = buildNodeQuery(columnPathsToSelect, whereConditions, globalJoins);
+        BuiltQuery q = buildNodeQuery(columnPathsToSelect, whereConditions, globalJoins,
+                IdentifierQuoter.forConnection(conn));
         List<Map<String, Object>> results = new ArrayList<>();
         try (PreparedStatement stmt = conn.prepareStatement(q.sql())) {
             for (int i = 0; i < q.params().size(); i++) {
@@ -622,7 +626,8 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
     private List<JoinStep> resolveJoinOrder(
             String anchorTableKey,
             Set<String> allTableKeys,
-            List<JoinEntryDto> globalJoins) {
+            List<JoinEntryDto> globalJoins,
+            IdentifierQuoter quoter) {
 
         List<JoinStep> steps = new ArrayList<>();
         Set<String> inFrom = new LinkedHashSet<>();
@@ -641,7 +646,7 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
                 if (path == null) continue;
 
                 for (JoinEntryDto join : path) {
-                    String newTableKey = addJoinStep(join, inFrom, steps);
+                    String newTableKey = addJoinStep(join, inFrom, steps, quoter);
                     if (newTableKey != null) {
                         inFrom.add(newTableKey);
                     }
@@ -662,7 +667,8 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
         return steps;
     }
 
-    private String addJoinStep(JoinEntryDto join, Set<String> knownTables, List<JoinStep> steps) {
+    private String addJoinStep(JoinEntryDto join, Set<String> knownTables, List<JoinStep> steps,
+                               IdentifierQuoter quoter) {
         ColumnPath left = ColumnPath.parse(join.getLeft());
         ColumnPath right = ColumnPath.parse(join.getRight());
         boolean leftKnown = knownTables.contains(left.tableKey());
@@ -674,9 +680,9 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
 
         boolean rightIsNew = !rightKnown;
         steps.add(new JoinStep(
-                rightIsNew ? left.quotedFull() : right.quotedFull(),
-                rightIsNew ? right.quotedFull() : left.quotedFull(),
-                rightIsNew ? right.quotedTableRef() : left.quotedTableRef(),
+                rightIsNew ? left.quotedFull(quoter) : right.quotedFull(quoter),
+                rightIsNew ? right.quotedFull(quoter) : left.quotedFull(quoter),
+                rightIsNew ? right.quotedTableRef(quoter) : left.quotedTableRef(quoter),
                 join.getAdditionalJoinConditions()
         ));
 
@@ -745,13 +751,14 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
         return null;
     }
 
-    private void appendAdditionalCondition(StringBuilder sql, List<Object> params, JoinConditionPairDto cond) {
+    private void appendAdditionalCondition(StringBuilder sql, List<Object> params, JoinConditionPairDto cond,
+                                           IdentifierQuoter quoter) {
         sql.append(" AND ")
-           .append(ColumnPath.parse(cond.getLeft()).quotedFull())
+           .append(ColumnPath.parse(cond.getLeft()).quotedFull(quoter))
            .append(" ").append(cond.getOperator().toSql()).append(" ");
 
         if (cond.getRight() != null) {
-            sql.append(ColumnPath.parse(cond.getRight()).quotedFull());
+            sql.append(ColumnPath.parse(cond.getRight()).quotedFull(quoter));
         } else if (cond.getRightLiteral() != null) {
             sql.append("?");
             params.add(cond.getRightLiteral());
