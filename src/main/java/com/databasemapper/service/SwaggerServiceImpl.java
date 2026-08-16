@@ -8,8 +8,10 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -128,8 +130,8 @@ public class SwaggerServiceImpl implements SwaggerService {
 
     private JsonNode fetchRawSwagger(com.databasemapper.model.Service service) {
         if (service.getSwaggerEndpoint() == null || service.getSwaggerEndpoint().isBlank()) {
-            throw new IllegalStateException(
-                    "Service with id " + service.getServiceId() + " has no swagger endpoint configured");
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "Service " + service.getServiceId() + " has no swagger endpoint configured");
         }
 
         String url = service.getServiceBaseUrl() + service.getSwaggerEndpoint();

@@ -26,7 +26,9 @@ public class SwaggerController {
         @ApiResponse(responseCode = "200", description = "Endpoints parsed and returned"),
         @ApiResponse(responseCode = "404", description = "Service not found",
             content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
-        @ApiResponse(responseCode = "500", description = "Unexpected error or no Swagger endpoint configured",
+        @ApiResponse(responseCode = "422", description = "Service has no Swagger endpoint configured",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "500", description = "Unexpected error",
             content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
     @GetMapping("/endpoints")
