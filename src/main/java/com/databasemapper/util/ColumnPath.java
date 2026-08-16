@@ -21,15 +21,17 @@ public record ColumnPath(String schema, String table, String column) {
         return prefix + "__" + column;
     }
 
-    public String quotedFull() {
+    public String quotedFull(IdentifierQuoter quoter) {
         if (schema != null) {
-            return "\"" + schema + "\".\"" + table + "\".\"" + column + "\"";
+            return quoter.quote(schema) + "." + quoter.quote(table) + "." + quoter.quote(column);
         }
-        return "\"" + table + "\".\"" + column + "\"";
+        return quoter.quote(table) + "." + quoter.quote(column);
     }
 
-    public String quotedTableRef() {
-        if (schema != null) return "\"" + schema + "\".\"" + table + "\"";
-        return "\"" + table + "\"";
+    public String quotedTableRef(IdentifierQuoter quoter) {
+        if (schema != null) {
+            return quoter.quote(schema) + "." + quoter.quote(table);
+        }
+        return quoter.quote(table);
     }
 }
