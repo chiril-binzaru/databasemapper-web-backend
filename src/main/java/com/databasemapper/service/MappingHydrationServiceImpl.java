@@ -15,6 +15,7 @@ import com.databasemapper.repository.EndpointRepository;
 import com.databasemapper.repository.MappingRepository;
 import com.databasemapper.util.ColumnPath;
 import com.databasemapper.util.IdentifierQuoter;
+import com.databasemapper.util.JdbcValueNormalizer;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -30,6 +31,8 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -478,7 +481,8 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
                 Map<String, Object> row = new LinkedHashMap<>();
                 ResultSetMetaData meta = rs.getMetaData();
                 for (int i = 1; i <= meta.getColumnCount(); i++) {
-                    row.put(meta.getColumnLabel(i), rs.getObject(i));
+                    row.put(meta.getColumnLabel(i),
+                            JdbcValueNormalizer.normalize(rs.getObject(i), meta.getColumnTypeName(i)));
                 }
                 return row;
             }
@@ -503,7 +507,8 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
                 while (rs.next()) {
                     Map<String, Object> row = new LinkedHashMap<>();
                     for (int i = 1; i <= meta.getColumnCount(); i++) {
-                        row.put(meta.getColumnLabel(i), rs.getObject(i));
+                        row.put(meta.getColumnLabel(i),
+                            JdbcValueNormalizer.normalize(rs.getObject(i), meta.getColumnTypeName(i)));
                     }
                     results.add(row);
                 }
@@ -818,6 +823,8 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
             node.put(fieldName, d.toLocalDate().toString());
         } else if (value instanceof java.sql.Time t) {
             node.put(fieldName, t.toLocalTime().toString());
+        } else if (value instanceof LocalDate || value instanceof LocalDateTime) {
+            node.put(fieldName, value.toString());
         } else {
             node.set(fieldName, objectMapper.convertValue(value, JsonNode.class));
         }
@@ -832,6 +839,8 @@ public class MappingHydrationServiceImpl implements MappingHydrationService {
             array.add(d.toLocalDate().toString());
         } else if (value instanceof java.sql.Time t) {
             array.add(t.toLocalTime().toString());
+        } else if (value instanceof LocalDate || value instanceof LocalDateTime) {
+            array.add(value.toString());
         } else {
             array.add(objectMapper.convertValue(value, JsonNode.class));
         }

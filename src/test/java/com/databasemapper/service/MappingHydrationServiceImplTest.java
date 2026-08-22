@@ -108,6 +108,21 @@ class MappingHydrationServiceImplTest {
             }
             """;
 
+    /** A visit whose date column is the Oracle {@code DATE} the driver widens to a Timestamp. */
+    private static final String VISIT_MAPPING_JSON = """
+            {
+              "modelName": "Visit",
+              "fieldMappings": [
+                { "kind": "VALUE",
+                  "serviceInfo": { "modelField": "id" },
+                  "databaseInfo": { "columnPath": "petclinic.visits.id", "primaryKey": true } },
+                { "kind": "VALUE",
+                  "serviceInfo": { "modelField": "date" },
+                  "databaseInfo": { "columnPath": "petclinic.visits.visit_date" } }
+              ]
+            }
+            """;
+
     @Mock
     private EndpointRepository endpointRepository;
 
@@ -330,6 +345,76 @@ class MappingHydrationServiceImplTest {
         return sqlCaptor.getValue();
     }
 
+    // --- D. Oracle DATE must not drift a day ------------------------------------------------------
+
+    /**
+     * The reported defect. Oracle hands a {@code DATE} back as a Timestamp; serializing it as an
+     * instant reads it as a local wall-clock value and re-expresses it in UTC, moving midnight onto
+     * the previous day anywhere east of Greenwich.
+     */
+    @Test
+    void oracleDateAtMidnightSerializesAsTheStoredDay() throws Exception {
+        stubRepositories(VISIT_MAPPING_JSON, false);
+        stubDriverQuote(DOUBLE_QUOTE);
+        stubSingleRow(
+                new String[]{"petclinic__visits__id", "petclinic__visits__visit_date"},
+                new Object[]{1, java.sql.Timestamp.valueOf("2010-03-04 00:00:00")},
+                new String[]{"NUMBER", "DATE"});
+
+        JsonNode result = service.fetchData(ENDPOINT_ID, requestWithFilters(Map.of()));
+
+        assertEquals("2010-03-04", result.get("date").asText());
+    }
+
+    @Test
+    void oracleDateWithATimeKeepsTheTimeRatherThanBeingTruncated() throws Exception {
+        stubRepositories(VISIT_MAPPING_JSON, false);
+        stubDriverQuote(DOUBLE_QUOTE);
+        stubSingleRow(
+                new String[]{"petclinic__visits__id", "petclinic__visits__visit_date"},
+                new Object[]{1, java.sql.Timestamp.valueOf("2010-03-04 14:30:15")},
+                new String[]{"NUMBER", "DATE"});
+
+        JsonNode result = service.fetchData(ENDPOINT_ID, requestWithFilters(Map.of()));
+
+        assertEquals("2010-03-04T14:30:15", result.get("date").asText());
+    }
+
+    /**
+     * The regression guard. PostgreSQL reports {@code timestamptz} with the same type code as
+     * {@code timestamp}, and its value is a genuine instant, so it must keep the instant conversion.
+     * Widening the date-only rule to every timestamp would shift this one in the opposite direction.
+     */
+    @Test
+    void postgresTimestamptzKeepsItsInstantConversion() throws Exception {
+        stubRepositories(VISIT_MAPPING_JSON, false);
+        stubDriverQuote(DOUBLE_QUOTE);
+        java.sql.Timestamp ts = java.sql.Timestamp.valueOf("2010-03-04 00:00:00");
+        stubSingleRow(
+                new String[]{"petclinic__visits__id", "petclinic__visits__visit_date"},
+                new Object[]{1, ts},
+                new String[]{"int4", "timestamptz"});
+
+        JsonNode result = service.fetchData(ENDPOINT_ID, requestWithFilters(Map.of()));
+
+        assertEquals(ts.toInstant().toString(), result.get("date").asText());
+    }
+
+    /** A vendor that reports a date-only column as java.sql.Date needs no correction at all. */
+    @Test
+    void sqlDateIsUnaffected() throws Exception {
+        stubRepositories(VISIT_MAPPING_JSON, false);
+        stubDriverQuote(DOUBLE_QUOTE);
+        stubSingleRow(
+                new String[]{"petclinic__visits__id", "petclinic__visits__visit_date"},
+                new Object[]{1, java.sql.Date.valueOf("2010-03-04")},
+                new String[]{"int4", "date"});
+
+        JsonNode result = service.fetchData(ENDPOINT_ID, requestWithFilters(Map.of()));
+
+        assertEquals("2010-03-04", result.get("date").asText());
+    }
+
     private DataFetchRequest requestWithFilters(Map<String, Object> filters) {
         DataFetchRequest request = new DataFetchRequest();
         request.setFilters(filters);
@@ -363,6 +448,11 @@ class MappingHydrationServiceImplTest {
     }
 
     private void stubSingleRow(String[] columnLabels, Object[] values) throws SQLException {
+        stubSingleRow(columnLabels, values, null);
+    }
+
+    private void stubSingleRow(String[] columnLabels, Object[] values, String[] columnTypeNames)
+            throws SQLException {
         ResultSet rs = org.mockito.Mockito.mock(ResultSet.class);
         ResultSetMetaData meta = org.mockito.Mockito.mock(ResultSetMetaData.class);
 
@@ -374,6 +464,9 @@ class MappingHydrationServiceImplTest {
         for (int i = 0; i < columnLabels.length; i++) {
             when(meta.getColumnLabel(i + 1)).thenReturn(columnLabels[i]);
             when(rs.getObject(i + 1)).thenReturn(values[i]);
+            if (columnTypeNames != null) {
+                when(meta.getColumnTypeName(i + 1)).thenReturn(columnTypeNames[i]);
+            }
         }
     }
 }
